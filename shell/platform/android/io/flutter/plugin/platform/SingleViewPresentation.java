@@ -1,4 +1,4 @@
-// Copyright 2018 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -58,8 +58,12 @@ class SingleViewPresentation extends Presentation {
     private final PlatformViewFactory mViewFactory;
 
     // This is the view id assigned by the Flutter framework to the embedded view, we keep it here
-    // so when we create the platform we can tell it its view id.
+    // so when we create the platform view we can tell it its view id.
     private int mViewId;
+
+    // This is the creation parameters for the platform view, we keep it here
+    // so when we create the platform view we can tell it its view id.
+    private Object mCreateParams;
 
     // The root view for the presentation, it has 2 childs: mContainer which contains the embedded view, and
     // mFakeWindowRootView which contains views that were added directly to the presentation's window manager.
@@ -74,10 +78,16 @@ class SingleViewPresentation extends Presentation {
      * Creates a presentation that will use the view factory to create a new
      * platform view in the presentation's onCreate, and attach it.
      */
-    public SingleViewPresentation(Context outerContext, Display display, PlatformViewFactory viewFactory, int viewId) {
+    public SingleViewPresentation(
+            Context outerContext,
+            Display display,
+            PlatformViewFactory viewFactory,
+            int viewId,
+            Object createParams) {
         super(outerContext, display);
         mViewFactory = viewFactory;
         mViewId = viewId;
+        mCreateParams = createParams;
         mState = new PresentationState();
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -117,7 +127,7 @@ class SingleViewPresentation extends Presentation {
         PresentationContext context = new PresentationContext(getContext(), mState.mWindowManagerHandler);
 
         if (mState.mView == null) {
-            mState.mView = mViewFactory.create(context, mViewId);
+            mState.mView = mViewFactory.create(context, mViewId, mCreateParams);
         }
 
         mContainer.addView(mState.mView.getView());
@@ -222,7 +232,8 @@ class SingleViewPresentation extends Presentation {
      * (see: https://github.com/flutter/flutter/issues/20714). This was triggered when selecting text in an embedded
      * WebView (as the selection handles are implemented as popup windows).
      *
-     * This dynamic proxy overrides the addView, removeView, and updateViewLayout methods to prevent these crashes.
+     * This dynamic proxy overrides the addView, removeView, removeViewImmediate, and updateViewLayout methods
+     * to prevent these crashes.
      *
      * This will be more efficient as a static proxy that's not using reflection, but as the engine is currently
      * not being built against the latest Android SDK we cannot override all relevant method.
@@ -256,6 +267,9 @@ class SingleViewPresentation extends Presentation {
                 case "removeView":
                     removeView(args);
                     return null;
+                case "removeViewImmediate":
+                    removeViewImmediate(args);
+                    return null;
                 case "updateViewLayout":
                     updateViewLayout(args);
                     return null;
@@ -283,6 +297,16 @@ class SingleViewPresentation extends Presentation {
                 return;
             }
             View view = (View) args[0];
+            mFakeWindowRootView.removeView(view);
+        }
+
+        private void removeViewImmediate(Object[] args) {
+            if (mFakeWindowRootView == null) {
+                Log.w(TAG, "Embedded view called removeViewImmediate while detached from presentation");
+                return;
+            }
+            View view = (View) args[0];
+            view.clearAnimation();
             mFakeWindowRootView.removeView(view);
         }
 

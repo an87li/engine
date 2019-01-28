@@ -1,4 +1,4 @@
-// Copyright 2018 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,6 +13,9 @@ namespace fml {
 namespace paths {
 
 namespace {
+
+constexpr char kFileURLPrefix[] = "file://";
+constexpr size_t kFileURLPrefixLength = sizeof(kFileURLPrefix) - 1;
 
 std::string GetCurrentDirectory() {
   char buffer[PATH_MAX];
@@ -42,6 +45,14 @@ std::string GetDirectoryName(const std::string& path) {
   if (separator == std::string::npos)
     return std::string();
   return path.substr(0, separator);
+}
+
+std::string FromURI(const std::string& uri) {
+  if (uri.substr(0, kFileURLPrefixLength) != kFileURLPrefix)
+    return uri;
+
+  std::string file_path = uri.substr(kFileURLPrefixLength);
+  return SanitizeURIEscapedCharacters(file_path);
 }
 
 }  // namespace paths

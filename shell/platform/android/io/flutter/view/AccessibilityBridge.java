@@ -1,11 +1,10 @@
-// Copyright 2013 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package io.flutter.view;
 
 import android.app.Activity;
-import android.content.Context;
 import android.graphics.Rect;
 import android.opengl.Matrix;
 import android.os.Build;
@@ -17,6 +16,7 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.view.accessibility.AccessibilityNodeProvider;
 import io.flutter.plugin.common.BasicMessageChannel;
 import io.flutter.plugin.common.StandardMessageCodec;
+import io.flutter.util.Predicate;
 
 import java.nio.ByteBuffer;
 import java.util.*;
@@ -109,8 +109,8 @@ class AccessibilityBridge
     AccessibilityBridge(FlutterView owner) {
         assert owner != null;
         mOwner = owner;
-        mObjects = new HashMap<Integer, SemanticsObject>();
-        mCustomAccessibilityActions = new HashMap<Integer, CustomAccessibilityAction>();
+        mObjects = new HashMap<>();
+        mCustomAccessibilityActions = new HashMap<>();
         previousRoutes = new ArrayList<>();
         mFlutterAccessibilityChannel = new BasicMessageChannel<>(
                 owner, "flutter/accessibility", StandardMessageCodec.INSTANCE);
@@ -124,6 +124,21 @@ class AccessibilityBridge
         } else {
             mFlutterAccessibilityChannel.setMessageHandler(null);
         }
+    }
+
+    private boolean shouldSetCollectionInfo(final SemanticsObject object) {
+        // TalkBack expects a number of rows and/or columns greater than 0 to announce
+        // in list and out of list.  For an infinite or growing list, you have to
+        // specify something > 0 to get "in list" announcements.
+        // TalkBack will also only track one list at a time, so we only want to set this
+        // for a list that contains the current a11y focused object - otherwise, if there
+        // are two lists or nested lists, we may end up with announcements for only the last
+        // one that is currently available in the semantics tree.  However, we also want
+        // to set it if we're exiting a list to a non-list, so that we can get the "out of list"
+        // announcement when A11y focus moves out of a list and not into another list.
+        return object.scrollChildren > 0
+                && (hasSemanticsObjectAncestor(mA11yFocusedObject, o -> o == object)
+                    || !hasSemanticsObjectAncestor(mA11yFocusedObject, o -> o.hasFlag(Flag.HAS_IMPLICIT_SCROLLING)));
     }
 
     @Override
@@ -144,6 +159,10 @@ class AccessibilityBridge
         }
 
         AccessibilityNodeInfo result = AccessibilityNodeInfo.obtain(mOwner, virtualViewId);
+        // Work around for https://github.com/flutter/flutter/issues/2101
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+            result.setViewIdResourceName("");
+        }
         result.setPackageName(mOwner.getContext().getPackageName());
         result.setClassName("android.view.View");
         result.setSource(mOwner, virtualViewId);
@@ -164,10 +183,12 @@ class AccessibilityBridge
                 if (object.textSelectionBase != -1 && object.textSelectionExtent != -1) {
                     result.setTextSelection(object.textSelectionBase, object.textSelectionExtent);
                 }
-                // Text fields will always be created as a live region, so that updates to
-                // the label trigger polite announcements. This makes it easy to follow a11y
-                // guidelines for text fields on Android.
-                result.setLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+                // Text fields will always be created as a live region when they have input focus,
+                // so that updates to the label trigger polite announcements. This makes it easy to
+                // follow a11y guidelines for text fields on Android.
+                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN_MR2 && mA11yFocusedObject != null && mA11yFocusedObject.id == virtualViewId) {
+                    result.setLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
+                }
             }
 
             // Cursor movements
@@ -211,7 +232,7 @@ class AccessibilityBridge
             // TODO(jonahwilliams): Figure out a way conform to the expected id from TalkBack's
             // CustomLabelManager. talkback/src/main/java/labeling/CustomLabelManager.java#L525
         }
-        if (object.hasAction(Action.DISMISS)) {
+        if (Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN_MR2 && object.hasAction(Action.DISMISS)) {
             result.setDismissable(true);
             result.addAction(AccessibilityNodeInfo.ACTION_DISMISS);
         }
@@ -261,14 +282,35 @@ class AccessibilityBridge
         if (object.hasAction(Action.SCROLL_LEFT) || object.hasAction(Action.SCROLL_UP)
                 || object.hasAction(Action.SCROLL_RIGHT) || object.hasAction(Action.SCROLL_DOWN)) {
             result.setScrollable(true);
+
             // This tells Android's a11y to send scroll events when reaching the end of
             // the visible viewport of a scrollable, unless the node itself does not
             // allow implicit scrolling - then we leave the className as view.View.
+            //
+            // We should prefer setCollectionInfo to the class names, as this way we get "In List"
+            // and "Out of list" announcements.  But we don't always know the counts, so we
+            // can fallback to the generic scroll view class names.
+            // TODO(dnfield): We should add semantics properties for rows and columns in 2 dimensional lists, e.g.
+            // GridView.  Right now, we're only supporting ListViews and only if they have scroll children.
             if (object.hasFlag(Flag.HAS_IMPLICIT_SCROLLING)) {
                 if (object.hasAction(Action.SCROLL_LEFT) || object.hasAction(Action.SCROLL_RIGHT)) {
-                    result.setClassName("android.widget.HorizontalScrollView");
+                    if (shouldSetCollectionInfo(object)) {
+                        result.setCollectionInfo(AccessibilityNodeInfo.CollectionInfo.obtain(
+                            0, // rows
+                            object.scrollChildren, // columns
+                            false)); // hierarchical
+                    } else {
+                        result.setClassName("android.widget.HorizontalScrollView");
+                    }
                 } else {
-                    result.setClassName("android.widget.ScrollView");
+                    if (shouldSetCollectionInfo(object)) {
+                        result.setCollectionInfo(AccessibilityNodeInfo.CollectionInfo.obtain(
+                            object.scrollChildren, // rows
+                            0, // columns
+                            false)); // hierarchical
+                    } else {
+                        result.setClassName("android.widget.ScrollView");
+                    }
                 }
             }
             // TODO(ianh): Once we're on SDK v23+, call addAction to
@@ -292,7 +334,7 @@ class AccessibilityBridge
                 result.addAction(AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD);
             }
         }
-        if (object.hasFlag(Flag.IS_LIVE_REGION)) {
+        if (object.hasFlag(Flag.IS_LIVE_REGION) && Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN_MR2) {
             result.setLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         }
 
@@ -438,7 +480,7 @@ class AccessibilityBridge
                 return true;
             }
             case AccessibilityNodeInfo.ACTION_SET_SELECTION: {
-                final Map<String, Integer> selection = new HashMap<String, Integer>();
+                final Map<String, Integer> selection = new HashMap<>();
                 final boolean hasSelection = arguments != null
                         && arguments.containsKey(
                                    AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT)
@@ -594,8 +636,6 @@ class AccessibilityBridge
     }
 
     void updateCustomAccessibilityActions(ByteBuffer buffer, String[] strings) {
-        ArrayList<CustomAccessibilityAction> updatedActions =
-                new ArrayList<CustomAccessibilityAction>();
         while (buffer.hasRemaining()) {
             int id = buffer.getInt();
             CustomAccessibilityAction action = getOrCreateAction(id);
@@ -608,7 +648,7 @@ class AccessibilityBridge
     }
 
     void updateSemantics(ByteBuffer buffer, String[] strings) {
-        ArrayList<SemanticsObject> updated = new ArrayList<SemanticsObject>();
+        ArrayList<SemanticsObject> updated = new ArrayList<>();
         while (buffer.hasRemaining()) {
             int id = buffer.getInt();
             SemanticsObject object = getOrCreateObject(id);
@@ -624,13 +664,13 @@ class AccessibilityBridge
             }
         }
 
-        Set<SemanticsObject> visitedObjects = new HashSet<SemanticsObject>();
+        Set<SemanticsObject> visitedObjects = new HashSet<>();
         SemanticsObject rootObject = getRootObject();
         List<SemanticsObject> newRoutes = new ArrayList<>();
         if (rootObject != null) {
             final float[] identity = new float[16];
             Matrix.setIdentityM(identity, 0);
-            // in android devices above AP 23, the system nav bar can be placed on the left side
+            // in android devices API 23 and above, the system nav bar can be placed on the left side
             // of the screen in landscape mode. We must handle the translation ourselves for the
             // a11y nodes.
             if (Build.VERSION.SDK_INT >= 23) {
@@ -715,10 +755,37 @@ class AccessibilityBridge
                     event.setScrollX((int) position);
                     event.setMaxScrollX((int) max);
                 }
+                if (object.scrollChildren > 0) {
+                    // We don't need to add 1 to the scroll index because TalkBack does this automagically.
+                    event.setItemCount(object.scrollChildren);
+                    event.setFromIndex(object.scrollIndex);
+                    int visibleChildren = 0;
+                    // handle hidden children at the beginning and end of the list.
+                    for (SemanticsObject child : object.childrenInHitTestOrder) {
+                        if (!child.hasFlag(Flag.IS_HIDDEN)) {
+                            visibleChildren += 1;
+                        }
+                    }
+                    assert(object.scrollIndex + visibleChildren <= object.scrollChildren);
+                    assert(!object.childrenInHitTestOrder.get(object.scrollIndex).hasFlag(Flag.IS_HIDDEN));
+                    // The setToIndex should be the index of the last visible child. Because we counted all
+                    // children, including the first index we need to subtract one.
+                    //
+                    //   [0, 1, 2, 3, 4, 5]
+                    //    ^     ^
+                    // In the example above where 0 is the first visible index and 2 is the last, we will
+                    // count 3 total visible children. We then subtract one to get the correct last visible
+                    // index of 2.
+                    event.setToIndex(object.scrollIndex + visibleChildren - 1);
+                }
                 sendAccessibilityEvent(event);
             }
-            if (object.hasFlag(Flag.IS_LIVE_REGION) && !object.hadFlag(Flag.IS_LIVE_REGION)) {
-                sendAccessibilityEvent(object.id, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+            if (object.hasFlag(Flag.IS_LIVE_REGION)) {
+                String label = object.label == null ? "" : object.label;
+                String previousLabel = object.previousLabel == null ? "" : object.label;
+                if (!label.equals(previousLabel) || !object.hadFlag(Flag.IS_LIVE_REGION)) {
+                    sendAccessibilityEvent(object.id, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
+                }
             } else if (object.hasFlag(Flag.IS_TEXT_FIELD) && object.didChangeLabel()
                     && mInputFocusedObject != null && mInputFocusedObject.id == object.id) {
                 // Text fields should announce when their label changes while focused. We use a live
@@ -733,7 +800,12 @@ class AccessibilityBridge
                 sendAccessibilityEvent(event);
             }
             if (mInputFocusedObject != null && mInputFocusedObject.id == object.id
-                    && object.hadFlag(Flag.IS_TEXT_FIELD) && object.hasFlag(Flag.IS_TEXT_FIELD)) {
+                    && object.hadFlag(Flag.IS_TEXT_FIELD) && object.hasFlag(Flag.IS_TEXT_FIELD)
+                    // If we have a TextField that has InputFocus, we should avoid announcing it if something
+                    // else we track has a11y focus. This needs to still work when, e.g., IME has a11y focus
+                    // or the "PASTE" popup is used though.
+                    // See more discussion at https://github.com/flutter/flutter/issues/23180
+                    && (mA11yFocusedObject == null || (mA11yFocusedObject.id == mInputFocusedObject.id))) {
                 String oldValue = object.previousValue != null ? object.previousValue : "";
                 String newValue = object.value != null ? object.value : "";
                 AccessibilityEvent event = createTextChangedEvent(object.id, oldValue, newValue);
@@ -849,17 +921,6 @@ class AccessibilityBridge
                 sendAccessibilityEvent(e);
                 break;
             }
-            // Requires that the node id provided corresponds to a live region, or TalkBack will
-            // ignore the event. The event will cause talkback to read out the new label even
-            // if node is not focused.
-            case "updateLiveRegion": {
-                Integer nodeId = (Integer) annotatedEvent.get("nodeId");
-                if (nodeId == null) {
-                    return;
-                }
-                sendAccessibilityEvent(nodeId, AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED);
-                break;
-            }
         }
     }
 
@@ -936,6 +997,11 @@ class AccessibilityBridge
     /// Value is derived from ACTION_TYPE_MASK in AccessibilityNodeInfo.java
     static int firstResourceId = 267386881;
 
+
+    static boolean hasSemanticsObjectAncestor(SemanticsObject target, Predicate<SemanticsObject> tester) {
+        return target != null && target.getAncestor(tester) != null;
+    }
+
     private class SemanticsObject {
         SemanticsObject() {}
 
@@ -945,6 +1011,8 @@ class AccessibilityBridge
         int actions;
         int textSelectionBase;
         int textSelectionExtent;
+        int scrollChildren;
+        int scrollIndex;
         float scrollPosition;
         float scrollExtentMax;
         float scrollExtentMin;
@@ -985,6 +1053,17 @@ class AccessibilityBridge
         private boolean globalGeometryDirty = true;
         private float[] globalTransform;
         private Rect globalRect;
+
+        SemanticsObject getAncestor(Predicate<SemanticsObject> tester) {
+            SemanticsObject nextAncestor = parent;
+            while (nextAncestor != null) {
+                if (tester.test(nextAncestor)) {
+                    return nextAncestor;
+                }
+                nextAncestor = nextAncestor.parent;
+            }
+            return null;
+        }
 
         boolean hasAction(Action action) {
             return (actions & action.value) != 0;
@@ -1046,6 +1125,8 @@ class AccessibilityBridge
             actions = buffer.getInt();
             textSelectionBase = buffer.getInt();
             textSelectionExtent = buffer.getInt();
+            scrollChildren = buffer.getInt();
+            scrollIndex = buffer.getInt();
             scrollPosition = buffer.getFloat();
             scrollExtentMax = buffer.getFloat();
             scrollExtentMin = buffer.getFloat();
@@ -1087,7 +1168,7 @@ class AccessibilityBridge
                 childrenInHitTestOrder = null;
             } else {
                 if (childrenInTraversalOrder == null)
-                    childrenInTraversalOrder = new ArrayList<SemanticsObject>(childCount);
+                    childrenInTraversalOrder = new ArrayList<>(childCount);
                 else
                     childrenInTraversalOrder.clear();
 
@@ -1098,7 +1179,7 @@ class AccessibilityBridge
                 }
 
                 if (childrenInHitTestOrder == null)
-                    childrenInHitTestOrder = new ArrayList<SemanticsObject>(childCount);
+                    childrenInHitTestOrder = new ArrayList<>(childCount);
                 else
                     childrenInHitTestOrder.clear();
 
@@ -1113,8 +1194,7 @@ class AccessibilityBridge
                 customAccessibilityActions = null;
             } else {
                 if (customAccessibilityActions == null)
-                    customAccessibilityActions =
-                            new ArrayList<CustomAccessibilityAction>(actionCount);
+                    customAccessibilityActions = new ArrayList<>(actionCount);
                 else
                     customAccessibilityActions.clear();
 
@@ -1125,7 +1205,7 @@ class AccessibilityBridge
                     } else if (action.overrideId == Action.LONG_PRESS.value) {
                         onLongPressOverride = action;
                     } else {
-                        // If we recieve a different overrideId it means that we were passed
+                        // If we receive a different overrideId it means that we were passed
                         // a standard action to override that we don't yet support.
                         assert action.overrideId == -1;
                         customAccessibilityActions.add(action);

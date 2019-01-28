@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -187,9 +187,14 @@ SceneUpdateContext::ExecutePaintTasks(CompositorContext::ScopedFrame& frame) {
   for (auto& task : paint_tasks_) {
     FML_DCHECK(task.surface);
     SkCanvas* canvas = task.surface->GetSkiaSurface()->getCanvas();
-    Layer::PaintContext context = {*canvas, frame.context().frame_time(),
+    Layer::PaintContext context = {canvas,
+                                   canvas,
+                                   nullptr,
+                                   frame.context().frame_time(),
                                    frame.context().engine_time(),
-                                   frame.context().texture_registry(), false};
+                                   frame.context().texture_registry(),
+                                   &frame.context().raster_cache(),
+                                   false};
     canvas->restoreToCount(1);
     canvas->save();
     canvas->clear(task.background_color);
@@ -301,7 +306,7 @@ SceneUpdateContext::Frame::~Frame() {
                         std::move(paint_layers_));
 }
 
-void SceneUpdateContext::Frame::AddPaintedLayer(Layer* layer) {
+void SceneUpdateContext::Frame::AddPaintLayer(Layer* layer) {
   FML_DCHECK(layer->needs_painting());
   paint_layers_.push_back(layer);
   paint_bounds_.join(layer->paint_bounds());

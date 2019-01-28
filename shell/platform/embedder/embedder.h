@@ -1,4 +1,4 @@
-// Copyright 2017 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -23,16 +23,66 @@ typedef enum {
   kSuccess = 0,
   kInvalidLibraryVersion,
   kInvalidArguments,
+  kInternalInconsistency,
 } FlutterResult;
 
 typedef enum {
   kOpenGL,
+  kSoftware,
 } FlutterRendererType;
 
 typedef struct _FlutterEngine* FlutterEngine;
 
+typedef struct {
+  //   horizontal scale factor
+  double scaleX;
+  //    horizontal skew factor
+  double skewX;
+  //   horizontal translation
+  double transX;
+  //    vertical skew factor
+  double skewY;
+  //   vertical scale factor
+  double scaleY;
+  //   vertical translation
+  double transY;
+  //    input x-axis perspective factor
+  double pers0;
+  //    input y-axis perspective factor
+  double pers1;
+  //    perspective scale factor
+  double pers2;
+} FlutterTransformation;
+
+typedef void (*VoidCallback)(void* /* user data */);
+
+typedef struct {
+  //    Target texture of the active texture unit (example GL_TEXTURE_2D).
+  uint32_t target;
+  //    The name of the texture.
+  uint32_t name;
+  //    The texture format (example GL_RGBA8).
+  uint32_t format;
+  //    User data to be returned on the invocation of the destruction callback.
+  void* user_data;
+  //    Callback invoked (on an engine managed thread) that asks the embedder to
+  //    collect the texture.
+  VoidCallback destruction_callback;
+} FlutterOpenGLTexture;
+
 typedef bool (*BoolCallback)(void* /* user data */);
+typedef FlutterTransformation (*TransformationCallback)(void* /* user data */);
 typedef uint32_t (*UIntCallback)(void* /* user data */);
+typedef bool (*SoftwareSurfacePresentCallback)(void* /* user data */,
+                                               const void* /* allocation */,
+                                               size_t /* row bytes */,
+                                               size_t /* height */);
+typedef void* (*ProcResolver)(void* /* user data */, const char* /* name */);
+typedef bool (*TextureFrameCallback)(void* /* user data */,
+                                     int64_t /* texture identifier */,
+                                     size_t /* width */,
+                                     size_t /* height */,
+                                     FlutterOpenGLTexture* /* texture out */);
 
 typedef struct {
   // The size of this struct. Must be sizeof(FlutterOpenGLRendererConfig).
@@ -42,12 +92,37 @@ typedef struct {
   BoolCallback present;
   UIntCallback fbo_callback;
   BoolCallback make_resource_current;
+  // By default, the renderer config assumes that the FBO does not change for
+  // the duration of the engine run. If this argument is true, the
+  // engine will ask the embedder for an updated FBO target (via an fbo_callback
+  // invocation) after a present call.
+  bool fbo_reset_after_present;
+  // The transformation to apply to the render target before any rendering
+  // operations. This callback is optional.
+  TransformationCallback surface_transformation;
+  ProcResolver gl_proc_resolver;
+  // When the embedder specifies that a texture has a frame available, the
+  // engine will call this method (on an internal engine managed thread) so that
+  // external texture details can be suppplied to the engine for subsequent
+  // composition.
+  TextureFrameCallback gl_external_texture_frame_callback;
 } FlutterOpenGLRendererConfig;
+
+typedef struct {
+  // The size of this struct. Must be sizeof(FlutterSoftwareRendererConfig).
+  size_t struct_size;
+  // The callback presented to the embedder to present a fully populated buffer
+  // to the user. The pixel format of the buffer is the native 32-bit RGBA
+  // format. The buffer is owned by the Flutter engine and must be copied in
+  // this callback if needed.
+  SoftwareSurfacePresentCallback surface_present_callback;
+} FlutterSoftwareRendererConfig;
 
 typedef struct {
   FlutterRendererType type;
   union {
     FlutterOpenGLRendererConfig open_gl;
+    FlutterSoftwareRendererConfig software;
   };
 } FlutterRendererConfig;
 
@@ -110,14 +185,24 @@ typedef struct {
   // string can be collected after the call to |FlutterEngineRun| returns. The
   // string must be NULL terminated.
   const char* assets_path;
-  // The path to the Dart file containing the |main| entry point. The string can
-  // be collected after the call to |FlutterEngineRun| returns. The string must
-  // be NULL terminated.
-  const char* main_path;
+  // The path to the Dart file containing the |main| entry point.
+  // The string can be collected after the call to |FlutterEngineRun| returns.
+  // The string must be NULL terminated.
+  //
+  // \deprecated As of Dart 2, running from Dart source is no longer supported.
+  // Dart code should now be compiled to kernel form and will be loaded by from
+  // |kernel_blob.bin| in the assets directory. This struct member is retained
+  // for ABI stability.
+  const char* main_path__unused__;
   // The path to the |.packages| for the project. The string can be collected
   // after the call to |FlutterEngineRun| returns. The string must be NULL
   // terminated.
-  const char* packages_path;
+  //
+  // \deprecated As of Dart 2, running from Dart source is no longer supported.
+  // Dart code should now be compiled to kernel form and will be loaded by from
+  // |kernel_blob.bin| in the assets directory. This struct member is retained
+  // for ABI stability.
+  const char* packages_path__unused__;
   // The path to the icudtl.dat file for the project. The string can be
   // collected after the call to |FlutterEngineRun| returns. The string must
   // be NULL terminated.
@@ -132,6 +217,34 @@ typedef struct {
   // to respond to platform messages from the Dart application. The callback
   // will be invoked on the thread on which the |FlutterEngineRun| call is made.
   FlutterPlatformMessageCallback platform_message_callback;
+  // The VM snapshot data buffer used in AOT operation. This buffer must be
+  // mapped in as read-only. For more information refer to the documentation on
+  // the Wiki at
+  // https://github.com/flutter/flutter/wiki/Flutter-engine-operation-in-AOT-Mode
+  const uint8_t* vm_snapshot_data;
+  // The size of the VM snapshot data buffer.
+  size_t vm_snapshot_data_size;
+  // The VM snapshot instructions buffer used in AOT operation. This buffer must
+  // be mapped in as read-execute. For more information refer to the
+  // documentation on the Wiki at
+  // https://github.com/flutter/flutter/wiki/Flutter-engine-operation-in-AOT-Mode
+  const uint8_t* vm_snapshot_instructions;
+  // The size of the VM snapshot instructions buffer.
+  size_t vm_snapshot_instructions_size;
+  // The isolate snapshot data buffer used in AOT operation. This buffer must be
+  // mapped in as read-only. For more information refer to the documentation on
+  // the Wiki at
+  // https://github.com/flutter/flutter/wiki/Flutter-engine-operation-in-AOT-Mode
+  const uint8_t* isolate_snapshot_data;
+  // The size of the isolate snapshot data buffer.
+  size_t isolate_snapshot_data_size;
+  // The isolate snapshot instructions buffer used in AOT operation. This buffer
+  // must be mapped in as read-execute. For more information refer to the
+  // documentation on the Wiki at
+  // https://github.com/flutter/flutter/wiki/Flutter-engine-operation-in-AOT-Mode
+  const uint8_t* isolate_snapshot_instructions;
+  // The size of the isoalte snapshot instructions buffer.
+  size_t isolate_snapshot_instructions_size;
 } FlutterProjectArgs;
 
 FLUTTER_EXPORT
@@ -171,6 +284,27 @@ FlutterResult FlutterEngineSendPlatformMessageResponse(
 // deprecated soon.
 FLUTTER_EXPORT
 FlutterResult __FlutterEngineFlushPendingTasksNow();
+
+// Register an external texture with a unique (per engine) identifier. Only
+// rendering backends that support external textures accept external texture
+// registrations. After the external texture is registered, the application can
+// mark that a frame is available by calling
+// |FlutterEngineMarkExternalTextureFrameAvailable|.
+FLUTTER_EXPORT
+FlutterResult FlutterEngineRegisterExternalTexture(FlutterEngine engine,
+                                                   int64_t texture_identifier);
+
+// Unregister a previous texture registration.
+FLUTTER_EXPORT
+FlutterResult FlutterEngineUnregisterExternalTexture(
+    FlutterEngine engine,
+    int64_t texture_identifier);
+
+// Mark that a new texture frame is available for a given texture identifier.
+FLUTTER_EXPORT
+FlutterResult FlutterEngineMarkExternalTextureFrameAvailable(
+    FlutterEngine engine,
+    int64_t texture_identifier);
 
 #if defined(__cplusplus)
 }  // extern "C"

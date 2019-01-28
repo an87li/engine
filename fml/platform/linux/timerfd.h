@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -8,7 +8,10 @@
 #include "flutter/fml/time/time_point.h"
 
 // clang-format off
-#if __has_include(<sys/timerfd.h>)
+#if __has_include(<sys/timerfd.h>) && \
+    (!defined(__ANDROID_API__) || __ANDROID_API__ >= 19)
+    // sys/timerfd.h is always present in Android NDK due to unified headers,
+    // but timerfd functions are only available on API 19 or later.
 // clang-format on
 
 #include <sys/timerfd.h>

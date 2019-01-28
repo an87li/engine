@@ -1,11 +1,13 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/shell/common/engine.h"
 
 #include <memory>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include "flutter/common/settings.h"
 #include "flutter/fml/eintr_wrapper.h"
@@ -19,13 +21,10 @@
 #include "flutter/shell/common/animator.h"
 #include "flutter/shell/common/platform_view.h"
 #include "flutter/shell/common/shell.h"
-#include "third_party/rapidjson/rapidjson/document.h"
+#include "rapidjson/document.h"
+#include "third_party/dart/runtime/include/dart_tools_api.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkPictureRecorder.h"
-
-#ifdef ERROR
-#undef ERROR
-#endif
 
 namespace shell {
 
@@ -42,12 +41,11 @@ Engine::Engine(Delegate& delegate,
                blink::TaskRunners task_runners,
                blink::Settings settings,
                std::unique_ptr<Animator> animator,
-               fml::WeakPtr<GrContext> resource_context,
-               fml::RefPtr<flow::SkiaUnrefQueue> unref_queue)
+               fml::WeakPtr<blink::SnapshotDelegate> snapshot_delegate,
+               fml::WeakPtr<blink::IOManager> io_manager)
     : delegate_(delegate),
       settings_(std::move(settings)),
       animator_(std::move(animator)),
-      load_script_error_(tonic::kNoError),
       activity_running_(false),
       have_surface_(false),
       weak_factory_(this) {
@@ -55,26 +53,31 @@ Engine::Engine(Delegate& delegate,
   // object as its delegate. The delegate may be called in the constructor and
   // we want to be fully initilazed by that point.
   runtime_controller_ = std::make_unique<blink::RuntimeController>(
-      *this,                                // runtime delegate
-      &vm,                                  // VM
-      std::move(isolate_snapshot),          // isolate snapshot
-      std::move(shared_snapshot),           // shared snapshot
-      std::move(task_runners),              // task runners
-      std::move(resource_context),          // resource context
-      std::move(unref_queue),               // skia unref queue
-      settings_.advisory_script_uri,        // advisory script uri
-      settings_.advisory_script_entrypoint  // advisory script entrypoint
+      *this,                                 // runtime delegate
+      &vm,                                   // VM
+      std::move(isolate_snapshot),           // isolate snapshot
+      std::move(shared_snapshot),            // shared snapshot
+      std::move(task_runners),               // task runners
+      std::move(snapshot_delegate),          // snapshot delegate
+      std::move(io_manager),                 // io manager
+      settings_.advisory_script_uri,         // advisory script uri
+      settings_.advisory_script_entrypoint,  // advisory script entrypoint
+      settings_.idle_notification_callback   // idle notification callback
   );
 }
 
 Engine::~Engine() = default;
+
+float Engine::GetDisplayRefreshRate() const {
+  return animator_->GetDisplayRefreshRate();
+}
 
 fml::WeakPtr<Engine> Engine::GetWeakPtr() const {
   return weak_factory_.GetWeakPtr();
 }
 
 bool Engine::UpdateAssetManager(
-    fml::RefPtr<blink::AssetManager> new_asset_manager) {
+    std::shared_ptr<blink::AssetManager> new_asset_manager) {
   if (asset_manager_ == new_asset_manager) {
     return false;
   }
@@ -86,10 +89,10 @@ bool Engine::UpdateAssetManager(
   }
 
   // Using libTXT as the text engine.
+  font_collection_.RegisterFonts(asset_manager_);
+
   if (settings_.use_test_fonts) {
     font_collection_.RegisterTestFonts();
-  } else {
-    font_collection_.RegisterFonts(asset_manager_);
   }
 
   return true;
@@ -104,18 +107,23 @@ bool Engine::Restart(RunConfiguration configuration) {
   delegate_.OnPreEngineRestart();
   runtime_controller_ = runtime_controller_->Clone();
   UpdateAssetManager(nullptr);
-  return Run(std::move(configuration));
+  return Run(std::move(configuration)) == Engine::RunStatus::Success;
 }
 
-bool Engine::Run(RunConfiguration configuration) {
+Engine::RunStatus Engine::Run(RunConfiguration configuration) {
   if (!configuration.IsValid()) {
     FML_LOG(ERROR) << "Engine run configuration was invalid.";
-    return false;
+    return RunStatus::Failure;
   }
 
-  if (!PrepareAndLaunchIsolate(std::move(configuration))) {
+  auto isolate_launch_status =
+      PrepareAndLaunchIsolate(std::move(configuration));
+  if (isolate_launch_status == Engine::RunStatus::Failure) {
     FML_LOG(ERROR) << "Engine not prepare and launch isolate.";
-    return false;
+    return isolate_launch_status;
+  } else if (isolate_launch_status ==
+             Engine::RunStatus::FailureAlreadyRunning) {
+    return isolate_launch_status;
   }
 
   std::shared_ptr<blink::DartIsolate> isolate =
@@ -137,10 +145,12 @@ bool Engine::Run(RunConfiguration configuration) {
     }
   }
 
-  return isolate_running;
+  return isolate_running ? Engine::RunStatus::Success
+                         : Engine::RunStatus::Failure;
 }
 
-bool Engine::PrepareAndLaunchIsolate(RunConfiguration configuration) {
+shell::Engine::RunStatus Engine::PrepareAndLaunchIsolate(
+    RunConfiguration configuration) {
   TRACE_EVENT0("flutter", "Engine::PrepareAndLaunchIsolate");
 
   UpdateAssetManager(configuration.GetAssetManager());
@@ -151,28 +161,35 @@ bool Engine::PrepareAndLaunchIsolate(RunConfiguration configuration) {
       runtime_controller_->GetRootIsolate().lock();
 
   if (!isolate) {
-    return false;
+    return RunStatus::Failure;
+  }
+
+  // This can happen on iOS after a plugin shows a native window and returns to
+  // the Flutter ViewController.
+  if (isolate->GetPhase() == blink::DartIsolate::Phase::Running) {
+    FML_DLOG(WARNING) << "Isolate was already running!";
+    return RunStatus::FailureAlreadyRunning;
   }
 
   if (!isolate_configuration->PrepareIsolate(*isolate)) {
     FML_LOG(ERROR) << "Could not prepare to run the isolate.";
-    return false;
+    return RunStatus::Failure;
   }
 
   if (configuration.GetEntrypointLibrary().empty()) {
     if (!isolate->Run(configuration.GetEntrypoint())) {
       FML_LOG(ERROR) << "Could not run the isolate.";
-      return false;
+      return RunStatus::Failure;
     }
   } else {
     if (!isolate->RunFromLibrary(configuration.GetEntrypointLibrary(),
                                  configuration.GetEntrypoint())) {
       FML_LOG(ERROR) << "Could not run the isolate.";
-      return false;
+      return RunStatus::Failure;
     }
   }
 
-  return true;
+  return RunStatus::Success;
 }
 
 void Engine::BeginFrame(fml::TimePoint frame_time) {
@@ -181,7 +198,8 @@ void Engine::BeginFrame(fml::TimePoint frame_time) {
 }
 
 void Engine::NotifyIdle(int64_t deadline) {
-  TRACE_EVENT0("flutter", "Engine::NotifyIdle");
+  TRACE_EVENT1("flutter", "Engine::NotifyIdle", "deadline_now_delta",
+               std::to_string(deadline - Dart_TimelineGetMicros()).c_str());
   runtime_controller_->NotifyIdle(deadline);
 }
 
@@ -203,10 +221,6 @@ bool Engine::UIIsolateHasLivePorts() {
 
 tonic::DartErrorHandleType Engine::GetUIIsolateLastError() {
   return runtime_controller_->GetLastError();
-}
-
-tonic::DartErrorHandleType Engine::GetLoadScriptError() {
-  return load_script_error_;
 }
 
 void Engine::OnOutputSurfaceCreated() {
@@ -313,14 +327,22 @@ bool Engine::HandleLocalizationPlatformMessage(
   if (args == root.MemberEnd() || !args->value.IsArray())
     return false;
 
-  const auto& language = args->value[0];
-  const auto& country = args->value[1];
-
-  if (!language.IsString() || !country.IsString())
+  const size_t strings_per_locale = 4;
+  if (args->value.Size() % strings_per_locale != 0)
     return false;
+  std::vector<std::string> locale_data;
+  for (size_t locale_index = 0; locale_index < args->value.Size();
+       locale_index += strings_per_locale) {
+    if (!args->value[locale_index].IsString() ||
+        !args->value[locale_index + 1].IsString())
+      return false;
+    locale_data.push_back(args->value[locale_index].GetString());
+    locale_data.push_back(args->value[locale_index + 1].GetString());
+    locale_data.push_back(args->value[locale_index + 2].GetString());
+    locale_data.push_back(args->value[locale_index + 3].GetString());
+  }
 
-  return runtime_controller_->SetLocale(language.GetString(),
-                                        country.GetString());
+  return runtime_controller_->SetLocales(locale_data);
 }
 
 void Engine::HandleSettingsPlatformMessage(blink::PlatformMessage* message) {
@@ -395,6 +417,11 @@ void Engine::HandlePlatformMessage(
   } else {
     delegate_.OnEngineHandlePlatformMessage(std::move(message));
   }
+}
+
+void Engine::UpdateIsolateDescription(const std::string isolate_name,
+                                      int64_t isolate_port) {
+  delegate_.UpdateIsolateDescription(isolate_name, isolate_port);
 }
 
 blink::FontCollection& Engine::GetFontCollection() {

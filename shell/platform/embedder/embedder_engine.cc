@@ -1,14 +1,10 @@
-// Copyright 2017 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/shell/platform/embedder/embedder_engine.h"
 
 #include "flutter/fml/make_copyable.h"
-
-#ifdef ERROR
-#undef ERROR
-#endif
 
 namespace shell {
 
@@ -17,12 +13,15 @@ EmbedderEngine::EmbedderEngine(
     blink::TaskRunners task_runners,
     blink::Settings settings,
     Shell::CreateCallback<PlatformView> on_create_platform_view,
-    Shell::CreateCallback<Rasterizer> on_create_rasterizer)
+    Shell::CreateCallback<Rasterizer> on_create_rasterizer,
+    EmbedderExternalTextureGL::ExternalTextureCallback
+        external_texture_callback)
     : thread_host_(std::move(thread_host)),
       shell_(Shell::Create(std::move(task_runners),
                            std::move(settings),
                            on_create_platform_view,
-                           on_create_rasterizer)) {
+                           on_create_rasterizer)),
+      external_texture_callback_(external_texture_callback) {
   is_valid_ = shell_ != nullptr;
 }
 
@@ -51,7 +50,7 @@ bool EmbedderEngine::NotifyDestroyed() {
 }
 
 bool EmbedderEngine::Run(RunConfiguration run_configuration) {
-  if (!IsValid()) {
+  if (!IsValid() || !run_configuration.IsValid()) {
     return false;
   }
 
@@ -61,7 +60,7 @@ bool EmbedderEngine::Run(RunConfiguration run_configuration) {
   ]() mutable {
         if (engine) {
           auto result = engine->Run(std::move(config));
-          if (!result) {
+          if (result == shell::Engine::RunStatus::Failure) {
             FML_LOG(ERROR) << "Could not launch the engine with configuration.";
           }
         }
@@ -113,6 +112,32 @@ bool EmbedderEngine::SendPlatformMessage(
         }
       });
 
+  return true;
+}
+
+bool EmbedderEngine::RegisterTexture(int64_t texture) {
+  if (!IsValid() || !external_texture_callback_) {
+    return false;
+  }
+  shell_->GetPlatformView()->RegisterTexture(
+      std::make_unique<EmbedderExternalTextureGL>(texture,
+                                                  external_texture_callback_));
+  return true;
+}
+
+bool EmbedderEngine::UnregisterTexture(int64_t texture) {
+  if (!IsValid() || !external_texture_callback_) {
+    return false;
+  }
+  shell_->GetPlatformView()->UnregisterTexture(texture);
+  return true;
+}
+
+bool EmbedderEngine::MarkTextureFrameAvailable(int64_t texture) {
+  if (!IsValid() || !external_texture_callback_) {
+    return false;
+  }
+  shell_->GetPlatformView()->MarkTextureFrameAvailable(texture);
   return true;
 }
 

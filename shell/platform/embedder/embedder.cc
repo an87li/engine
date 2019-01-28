@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #define FML_USED_ON_EMBEDDER
 
 #include "flutter/fml/build_config.h"
+#include "flutter/fml/native_library.h"
 
 #if OS_WIN
 #define FLUTTER_EXPORT __declspec(dllexport)
@@ -39,8 +40,8 @@
     return static_cast<decltype(pointer->member)>((default_value));      \
   })()
 
-bool IsRendererValid(const FlutterRendererConfig* config) {
-  if (config == nullptr || config->type != kOpenGL) {
+static bool IsOpenGLRendererConfigValid(const FlutterRendererConfig* config) {
+  if (config->type != kOpenGL) {
     return false;
   }
 
@@ -56,9 +57,234 @@ bool IsRendererValid(const FlutterRendererConfig* config) {
   return true;
 }
 
+static bool IsSoftwareRendererConfigValid(const FlutterRendererConfig* config) {
+  if (config->type != kSoftware) {
+    return false;
+  }
+
+  const FlutterSoftwareRendererConfig* software_config = &config->software;
+
+  if (SAFE_ACCESS(software_config, surface_present_callback, nullptr) ==
+      nullptr) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool IsRendererValid(const FlutterRendererConfig* config) {
+  if (config == nullptr) {
+    return false;
+  }
+
+  switch (config->type) {
+    case kOpenGL:
+      return IsOpenGLRendererConfigValid(config);
+    case kSoftware:
+      return IsSoftwareRendererConfigValid(config);
+    default:
+      return false;
+  }
+
+  return false;
+}
+
+#if OS_LINUX || OS_WIN
+static void* DefaultGLProcResolver(const char* name) {
+  static fml::RefPtr<fml::NativeLibrary> proc_library =
+#if OS_LINUX
+      fml::NativeLibrary::CreateForCurrentProcess();
+#elif OS_WIN  // OS_LINUX
+      fml::NativeLibrary::Create("opengl32.dll");
+#endif        // OS_WIN
+  return static_cast<void*>(
+      const_cast<uint8_t*>(proc_library->ResolveSymbol(name)));
+}
+#endif  // OS_LINUX || OS_WIN
+
+static shell::Shell::CreateCallback<shell::PlatformView>
+InferOpenGLPlatformViewCreationCallback(
+    const FlutterRendererConfig* config,
+    void* user_data,
+    shell::PlatformViewEmbedder::PlatformDispatchTable
+        platform_dispatch_table) {
+  if (config->type != kOpenGL) {
+    return nullptr;
+  }
+
+  auto gl_make_current = [ptr = config->open_gl.make_current,
+                          user_data]() -> bool { return ptr(user_data); };
+
+  auto gl_clear_current = [ptr = config->open_gl.clear_current,
+                           user_data]() -> bool { return ptr(user_data); };
+
+  auto gl_present = [ptr = config->open_gl.present, user_data]() -> bool {
+    return ptr(user_data);
+  };
+
+  auto gl_fbo_callback = [ptr = config->open_gl.fbo_callback,
+                          user_data]() -> intptr_t { return ptr(user_data); };
+
+  const FlutterOpenGLRendererConfig* open_gl_config = &config->open_gl;
+  std::function<bool()> gl_make_resource_current_callback = nullptr;
+  if (SAFE_ACCESS(open_gl_config, make_resource_current, nullptr) != nullptr) {
+    gl_make_resource_current_callback =
+        [ptr = config->open_gl.make_resource_current, user_data]() {
+          return ptr(user_data);
+        };
+  }
+
+  std::function<SkMatrix(void)> gl_surface_transformation_callback = nullptr;
+  if (SAFE_ACCESS(open_gl_config, surface_transformation, nullptr) != nullptr) {
+    gl_surface_transformation_callback =
+        [ptr = config->open_gl.surface_transformation, user_data]() {
+          FlutterTransformation transformation = ptr(user_data);
+          return SkMatrix::MakeAll(transformation.scaleX,  //
+                                   transformation.skewX,   //
+                                   transformation.transX,  //
+                                   transformation.skewY,   //
+                                   transformation.scaleY,  //
+                                   transformation.transY,  //
+                                   transformation.pers0,   //
+                                   transformation.pers1,   //
+                                   transformation.pers2    //
+          );
+        };
+  }
+
+  shell::GPUSurfaceGLDelegate::GLProcResolver gl_proc_resolver = nullptr;
+  if (SAFE_ACCESS(open_gl_config, gl_proc_resolver, nullptr) != nullptr) {
+    gl_proc_resolver = [ptr = config->open_gl.gl_proc_resolver,
+                        user_data](const char* gl_proc_name) {
+      return ptr(user_data, gl_proc_name);
+    };
+  } else {
+#if OS_LINUX || OS_WIN
+    gl_proc_resolver = DefaultGLProcResolver;
+#endif
+  }
+
+  bool fbo_reset_after_present =
+      SAFE_ACCESS(open_gl_config, fbo_reset_after_present, false);
+
+  shell::EmbedderSurfaceGL::GLDispatchTable gl_dispatch_table = {
+      gl_make_current,                     // gl_make_current_callback
+      gl_clear_current,                    // gl_clear_current_callback
+      gl_present,                          // gl_present_callback
+      gl_fbo_callback,                     // gl_fbo_callback
+      gl_make_resource_current_callback,   // gl_make_resource_current_callback
+      gl_surface_transformation_callback,  // gl_surface_transformation_callback
+      gl_proc_resolver,                    // gl_proc_resolver
+  };
+
+  return [gl_dispatch_table, fbo_reset_after_present,
+          platform_dispatch_table](shell::Shell& shell) {
+    return std::make_unique<shell::PlatformViewEmbedder>(
+        shell,                    // delegate
+        shell.GetTaskRunners(),   // task runners
+        gl_dispatch_table,        // embedder GL dispatch table
+        fbo_reset_after_present,  // fbo reset after present
+        platform_dispatch_table   // embedder platform dispatch table
+    );
+  };
+}
+
+static shell::Shell::CreateCallback<shell::PlatformView>
+InferSoftwarePlatformViewCreationCallback(
+    const FlutterRendererConfig* config,
+    void* user_data,
+    shell::PlatformViewEmbedder::PlatformDispatchTable
+        platform_dispatch_table) {
+  if (config->type != kSoftware) {
+    return nullptr;
+  }
+
+  auto software_present_backing_store =
+      [ptr = config->software.surface_present_callback, user_data](
+          const void* allocation, size_t row_bytes, size_t height) -> bool {
+    return ptr(user_data, allocation, row_bytes, height);
+  };
+
+  shell::EmbedderSurfaceSoftware::SoftwareDispatchTable
+      software_dispatch_table = {
+          software_present_backing_store,  // required
+      };
+
+  return
+      [software_dispatch_table, platform_dispatch_table](shell::Shell& shell) {
+        return std::make_unique<shell::PlatformViewEmbedder>(
+            shell,                    // delegate
+            shell.GetTaskRunners(),   // task runners
+            software_dispatch_table,  // software dispatch table
+            platform_dispatch_table   // platform dispatch table
+        );
+      };
+}
+
+static shell::Shell::CreateCallback<shell::PlatformView>
+InferPlatformViewCreationCallback(
+    const FlutterRendererConfig* config,
+    void* user_data,
+    shell::PlatformViewEmbedder::PlatformDispatchTable
+        platform_dispatch_table) {
+  if (config == nullptr) {
+    return nullptr;
+  }
+
+  switch (config->type) {
+    case kOpenGL:
+      return InferOpenGLPlatformViewCreationCallback(config, user_data,
+                                                     platform_dispatch_table);
+    case kSoftware:
+      return InferSoftwarePlatformViewCreationCallback(config, user_data,
+                                                       platform_dispatch_table);
+    default:
+      return nullptr;
+  }
+  return nullptr;
+}
+
 struct _FlutterPlatformMessageResponseHandle {
   fml::RefPtr<blink::PlatformMessage> message;
 };
+
+void PopulateSnapshotMappingCallbacks(const FlutterProjectArgs* args,
+                                      blink::Settings& settings) {
+  // There are no ownership concerns here as all mappings are owned by the
+  // embedder and not the engine.
+  auto make_mapping_callback = [](const uint8_t* mapping, size_t size) {
+    return [mapping, size]() {
+      return std::make_unique<fml::NonOwnedMapping>(mapping, size);
+    };
+  };
+
+  if (blink::DartVM::IsRunningPrecompiledCode()) {
+    if (SAFE_ACCESS(args, vm_snapshot_data_size, 0) != 0 &&
+        SAFE_ACCESS(args, vm_snapshot_data, nullptr) != nullptr) {
+      settings.vm_snapshot_data = make_mapping_callback(
+          args->vm_snapshot_data, args->vm_snapshot_data_size);
+    }
+
+    if (SAFE_ACCESS(args, vm_snapshot_instructions_size, 0) != 0 &&
+        SAFE_ACCESS(args, vm_snapshot_instructions, nullptr) != nullptr) {
+      settings.vm_snapshot_instr = make_mapping_callback(
+          args->vm_snapshot_instructions, args->vm_snapshot_instructions_size);
+    }
+
+    if (SAFE_ACCESS(args, isolate_snapshot_data_size, 0) != 0 &&
+        SAFE_ACCESS(args, isolate_snapshot_data, nullptr) != nullptr) {
+      settings.isolate_snapshot_data = make_mapping_callback(
+          args->isolate_snapshot_data, args->isolate_snapshot_data_size);
+    }
+
+    if (SAFE_ACCESS(args, isolate_snapshot_instructions_size, 0) != 0 &&
+        SAFE_ACCESS(args, isolate_snapshot_instructions, nullptr) != nullptr) {
+      settings.isolate_snapshot_instr =
+          make_mapping_callback(args->isolate_snapshot_instructions,
+                                args->isolate_snapshot_instructions_size);
+    }
+  }
+}
 
 FlutterResult FlutterEngineRun(size_t version,
                                const FlutterRendererConfig* config,
@@ -78,54 +304,22 @@ FlutterResult FlutterEngineRun(size_t version,
     return kInvalidArguments;
   }
 
-  if (SAFE_ACCESS(args, assets_path, nullptr) == nullptr ||
-      SAFE_ACCESS(args, main_path, nullptr) == nullptr ||
-      SAFE_ACCESS(args, packages_path, nullptr) == nullptr) {
+  if (SAFE_ACCESS(args, assets_path, nullptr) == nullptr) {
     return kInvalidArguments;
+  }
+
+  if (SAFE_ACCESS(args, main_path__unused__, nullptr) != nullptr) {
+    FML_LOG(WARNING)
+        << "FlutterProjectArgs.main_path is deprecated and should be set null.";
+  }
+
+  if (SAFE_ACCESS(args, packages_path__unused__, nullptr) != nullptr) {
+    FML_LOG(WARNING) << "FlutterProjectArgs.packages_path is deprecated and "
+                        "should be set null.";
   }
 
   if (!IsRendererValid(config)) {
     return kInvalidArguments;
-  }
-
-  auto make_current = [ptr = config->open_gl.make_current,
-                       user_data]() -> bool { return ptr(user_data); };
-
-  auto clear_current = [ptr = config->open_gl.clear_current,
-                        user_data]() -> bool { return ptr(user_data); };
-
-  auto present = [ptr = config->open_gl.present, user_data]() -> bool {
-    return ptr(user_data);
-  };
-
-  auto fbo_callback = [ptr = config->open_gl.fbo_callback,
-                       user_data]() -> intptr_t { return ptr(user_data); };
-
-  shell::PlatformViewEmbedder::PlatformMessageResponseCallback
-      platform_message_response_callback = nullptr;
-  if (SAFE_ACCESS(args, platform_message_callback, nullptr) != nullptr) {
-    platform_message_response_callback =
-        [ptr = args->platform_message_callback,
-         user_data](fml::RefPtr<blink::PlatformMessage> message) {
-          auto handle = new FlutterPlatformMessageResponseHandle();
-          const FlutterPlatformMessage incoming_message = {
-              sizeof(FlutterPlatformMessage),  // struct_size
-              message->channel().c_str(),      // channel
-              message->data().data(),          // message
-              message->data().size(),          // message_size
-              handle,                          // response_handle
-          };
-          handle->message = std::move(message);
-          return ptr(&incoming_message, user_data);
-        };
-  }
-
-  const FlutterOpenGLRendererConfig* open_gl_config = &config->open_gl;
-  std::function<bool()> make_resource_current_callback = nullptr;
-  if (SAFE_ACCESS(open_gl_config, make_resource_current, nullptr) != nullptr) {
-    make_resource_current_callback = [ptr =
-                                          config->open_gl.make_resource_current,
-                                      user_data]() { return ptr(user_data); };
   }
 
   std::string icu_data_path;
@@ -142,25 +336,23 @@ FlutterResult FlutterEngineRun(size_t version,
   }
 
   blink::Settings settings = shell::SettingsFromCommandLine(command_line);
+
+  PopulateSnapshotMappingCallbacks(args, settings);
+
   settings.icu_data_path = icu_data_path;
   settings.assets_path = args->assets_path;
 
-  // Check whether the assets path contains Dart 2 kernel assets.
-  const std::string kApplicationKernelSnapshotFileName = "kernel_blob.bin";
-  std::string platform_kernel_path =
-      fml::paths::JoinPaths({settings.assets_path, "platform_strong.dill"});
-  std::string application_kernel_path = fml::paths::JoinPaths(
-      {settings.assets_path, kApplicationKernelSnapshotFileName});
-  if (fml::IsFile(application_kernel_path)) {
-    // Run from a kernel snapshot.
-    settings.platform_kernel_path = platform_kernel_path;
-    if (fml::IsFile(platform_kernel_path)) {
-      settings.application_kernel_asset = kApplicationKernelSnapshotFileName;
+  if (!blink::DartVM::IsRunningPrecompiledCode()) {
+    // Verify the assets path contains Dart 2 kernel assets.
+    const std::string kApplicationKernelSnapshotFileName = "kernel_blob.bin";
+    std::string application_kernel_path = fml::paths::JoinPaths(
+        {settings.assets_path, kApplicationKernelSnapshotFileName});
+    if (!fml::IsFile(application_kernel_path)) {
+      FML_LOG(ERROR) << "Not running in AOT mode but could not resolve the "
+                        "kernel binary.";
+      return kInvalidArguments;
     }
-  } else {
-    // Run from a main Dart file.
-    settings.main_dart_file_path = args->main_path;
-    settings.packages_file_path = args->packages_path;
+    settings.application_kernel_asset = kApplicationKernelSnapshotFileName;
   }
 
   settings.task_observer_add = [](intptr_t key, fml::closure callback) {
@@ -184,36 +376,100 @@ FlutterResult FlutterEngineRun(size_t version,
       thread_host.io_thread->GetTaskRunner()           // io
   );
 
-  shell::PlatformViewEmbedder::DispatchTable dispatch_table = {
-      make_current,                        // gl_make_current_callback
-      clear_current,                       // gl_clear_current_callback
-      present,                             // gl_present_callback
-      fbo_callback,                        // gl_fbo_callback
+  shell::PlatformViewEmbedder::PlatformMessageResponseCallback
+      platform_message_response_callback = nullptr;
+  if (SAFE_ACCESS(args, platform_message_callback, nullptr) != nullptr) {
+    platform_message_response_callback =
+        [ptr = args->platform_message_callback,
+         user_data](fml::RefPtr<blink::PlatformMessage> message) {
+          auto handle = new FlutterPlatformMessageResponseHandle();
+          const FlutterPlatformMessage incoming_message = {
+              sizeof(FlutterPlatformMessage),  // struct_size
+              message->channel().c_str(),      // channel
+              message->data().data(),          // message
+              message->data().size(),          // message_size
+              handle,                          // response_handle
+          };
+          handle->message = std::move(message);
+          return ptr(&incoming_message, user_data);
+        };
+  }
+
+  shell::PlatformViewEmbedder::PlatformDispatchTable platform_dispatch_table = {
       platform_message_response_callback,  // platform_message_response_callback
-      make_resource_current_callback,      // gl_make_resource_current_callback
   };
 
-  shell::Shell::CreateCallback<shell::PlatformView> on_create_platform_view =
-      [dispatch_table](shell::Shell& shell) {
-        return std::make_unique<shell::PlatformViewEmbedder>(
-            shell,                   // delegate
-            shell.GetTaskRunners(),  // task runners
-            dispatch_table           // embedder dispatch table
-        );
-      };
+  auto on_create_platform_view = InferPlatformViewCreationCallback(
+      config, user_data, platform_dispatch_table);
+
+  if (!on_create_platform_view) {
+    return kInvalidArguments;
+  }
 
   shell::Shell::CreateCallback<shell::Rasterizer> on_create_rasterizer =
       [](shell::Shell& shell) {
         return std::make_unique<shell::Rasterizer>(shell.GetTaskRunners());
       };
 
+  // TODO(chinmaygarde): This is the wrong spot for this. It belongs in the
+  // platform view jump table.
+  shell::EmbedderExternalTextureGL::ExternalTextureCallback
+      external_texture_callback;
+  if (config->type == kOpenGL) {
+    const FlutterOpenGLRendererConfig* open_gl_config = &config->open_gl;
+    if (SAFE_ACCESS(open_gl_config, gl_external_texture_frame_callback,
+                    nullptr) != nullptr) {
+      external_texture_callback =
+          [ptr = open_gl_config->gl_external_texture_frame_callback, user_data](
+              int64_t texture_identifier, GrContext* context,
+              const SkISize& size) -> sk_sp<SkImage> {
+        FlutterOpenGLTexture texture = {};
+
+        if (!ptr(user_data, texture_identifier, size.width(), size.height(),
+                 &texture)) {
+          return nullptr;
+        }
+
+        GrGLTextureInfo gr_texture_info = {texture.target, texture.name,
+                                           texture.format};
+
+        GrBackendTexture gr_backend_texture(size.width(), size.height(),
+                                            GrMipMapped::kNo, gr_texture_info);
+        SkImage::TextureReleaseProc release_proc = texture.destruction_callback;
+        auto image = SkImage::MakeFromTexture(
+            context,                   // context
+            gr_backend_texture,        // texture handle
+            kTopLeft_GrSurfaceOrigin,  // origin
+            kRGBA_8888_SkColorType,    // color type
+            kPremul_SkAlphaType,       // alpha type
+            nullptr,                   // colorspace
+            release_proc,              // texture release proc
+            texture.user_data          // texture release context
+        );
+
+        if (!image) {
+          // In case Skia rejects the image, call the release proc so that
+          // embedders can perform collection of intermediates.
+          if (release_proc) {
+            release_proc(texture.user_data);
+          }
+          FML_LOG(ERROR) << "Could not create external texture.";
+          return nullptr;
+        }
+
+        return image;
+      };
+    }
+  }
+
   // Step 1: Create the engine.
   auto embedder_engine =
-      std::make_unique<shell::EmbedderEngine>(std::move(thread_host),   //
-                                              std::move(task_runners),  //
-                                              settings,                 //
-                                              on_create_platform_view,  //
-                                              on_create_rasterizer      //
+      std::make_unique<shell::EmbedderEngine>(std::move(thread_host),    //
+                                              std::move(task_runners),   //
+                                              settings,                  //
+                                              on_create_platform_view,   //
+                                              on_create_rasterizer,      //
+                                              external_texture_callback  //
       );
 
   if (!embedder_engine->IsValid()) {
@@ -233,8 +489,11 @@ FlutterResult FlutterEngineRun(size_t version,
           fml::Duplicate(settings.assets_dir)));
 
   run_configuration.AddAssetResolver(
-      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenFile(
-          settings.assets_path.c_str(), fml::OpenPermission::kRead, true)));
+      std::make_unique<blink::DirectoryAssetBundle>(fml::OpenDirectory(
+          settings.assets_path.c_str(), false, fml::FilePermission::kRead)));
+  if (!run_configuration.IsValid()) {
+    return kInvalidArguments;
+  }
 
   if (!embedder_engine->Run(std::move(run_configuration))) {
     return kInvalidArguments;
@@ -370,5 +629,45 @@ FlutterResult FlutterEngineSendPlatformMessageResponse(
 
 FlutterResult __FlutterEngineFlushPendingTasksNow() {
   fml::MessageLoop::GetCurrent().RunExpiredTasksNow();
+  return kSuccess;
+}
+
+FlutterResult FlutterEngineRegisterExternalTexture(FlutterEngine engine,
+                                                   int64_t texture_identifier) {
+  if (engine == nullptr || texture_identifier == 0) {
+    return kInvalidArguments;
+  }
+  if (!reinterpret_cast<shell::EmbedderEngine*>(engine)->RegisterTexture(
+          texture_identifier)) {
+    return kInternalInconsistency;
+  }
+  return kSuccess;
+}
+
+FlutterResult FlutterEngineUnregisterExternalTexture(
+    FlutterEngine engine,
+    int64_t texture_identifier) {
+  if (engine == nullptr || texture_identifier == 0) {
+    return kInvalidArguments;
+  }
+
+  if (!reinterpret_cast<shell::EmbedderEngine*>(engine)->UnregisterTexture(
+          texture_identifier)) {
+    return kInternalInconsistency;
+  }
+
+  return kSuccess;
+}
+
+FlutterResult FlutterEngineMarkExternalTextureFrameAvailable(
+    FlutterEngine engine,
+    int64_t texture_identifier) {
+  if (engine == nullptr || texture_identifier == 0) {
+    return kInvalidArguments;
+  }
+  if (!reinterpret_cast<shell::EmbedderEngine*>(engine)
+           ->MarkTextureFrameAvailable(texture_identifier)) {
+    return kInternalInconsistency;
+  }
   return kSuccess;
 }

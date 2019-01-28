@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -404,7 +404,7 @@ class SemanticsFlag {
   /// that the node's semantic label can be used to announce an edge triggered
   /// semantics update.
   ///
-  /// Semantic nodes annotated with this flag will still recieve a11y focus.
+  /// Semantic nodes annotated with this flag will still receive a11y focus.
   ///
   /// Updating this label within the same active route subtree will not cause
   /// additional announcements.
@@ -550,8 +550,10 @@ class SemanticsFlag {
 ///
 /// Once created, the [SemanticsUpdate] objects can be passed to
 /// [Window.updateSemantics] to update the semantics conveyed to the user.
+@pragma('vm:entry-point')
 class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
   /// Creates an empty [SemanticsUpdateBuilder] object.
+  @pragma('vm:entry-point')
   SemanticsUpdateBuilder() { _constructor(); }
   void _constructor() native 'SemanticsUpdateBuilder_constructor';
 
@@ -596,22 +598,36 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
   /// describe the maximum and minimum in-rage values that `scrollPosition` can
   /// be. Both or either may be infinity to indicate unbound scrolling. The
   /// value for `scrollPosition` can (temporarily) be outside this range, for
-  /// example during an overscroll.
+  /// example during an overscroll. `scrollChildren` is the count of the
+  /// total number of child nodes that contribute semantics and `scrollIndex`
+  /// is the index of the first visible child node that contributes semantics.
   ///
   /// The `rect` is the region occupied by this node in its own coordinate
   /// system.
   ///
   /// The `transform` is a matrix that maps this node's coordinate system into
   /// its parent's coordinate system.
+  ///
+  /// The `elevation` describes the distance in z-direction between this node
+  /// and the `elevation` of the parent.
+  ///
+  /// The `thickness` describes how much space this node occupies in the
+  /// z-direction starting at `elevation`. Basically, in the z-direction the
+  /// node starts at `elevation` above the parent and ends at `elevation` +
+  /// `thickness` above the parent.
   void updateNode({
     int id,
     int flags,
     int actions,
     int textSelectionBase,
     int textSelectionExtent,
+    int scrollChildren,
+    int scrollIndex,
     double scrollPosition,
     double scrollExtentMax,
     double scrollExtentMin,
+    double elevation,
+    double thickness,
     Rect rect,
     String label,
     String hint,
@@ -622,8 +638,6 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
     Float64List transform,
     Int32List childrenInTraversalOrder,
     Int32List childrenInHitTestOrder,
-    @Deprecated('use additionalActions instead')
-    Int32List customAcccessibilityActions,
     Int32List additionalActions,
   }) {
     if (transform.length != 16)
@@ -634,6 +648,8 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
       actions,
       textSelectionBase,
       textSelectionExtent,
+      scrollChildren,
+      scrollIndex,
       scrollPosition,
       scrollExtentMax,
       scrollExtentMin,
@@ -641,6 +657,8 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
       rect.top,
       rect.right,
       rect.bottom,
+      elevation,
+      thickness,
       label,
       hint,
       value,
@@ -650,7 +668,7 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
       transform,
       childrenInTraversalOrder,
       childrenInHitTestOrder,
-      additionalActions ?? customAcccessibilityActions,
+      additionalActions,
     );
   }
   void _updateNode(
@@ -659,6 +677,8 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
     int actions,
     int textSelectionBase,
     int textSelectionExtent,
+    int scrollChildren,
+    int scrollIndex,
     double scrollPosition,
     double scrollExtentMax,
     double scrollExtentMin,
@@ -666,6 +686,8 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
     double top,
     double right,
     double bottom,
+    double elevation,
+    double thickness,
     String label,
     String hint,
     String value,
@@ -714,11 +736,13 @@ class SemanticsUpdateBuilder extends NativeFieldWrapperClass2 {
 ///
 /// Semantics updates can be applied to the system's retained semantics tree
 /// using the [Window.updateSemantics] method.
+@pragma('vm:entry-point')
 class SemanticsUpdate extends NativeFieldWrapperClass2 {
   /// This class is created by the engine, and should not be instantiated
   /// or extended directly.
   ///
   /// To create a SemanticsUpdate object, use a [SemanticsUpdateBuilder].
+  @pragma('vm:entry-point')
   SemanticsUpdate._();
 
   /// Releases the resources used by this semantics update.

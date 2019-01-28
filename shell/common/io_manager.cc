@@ -1,10 +1,11 @@
-// Copyright 2017 The Flutter Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include "flutter/shell/common/io_manager.h"
 
 #include "flutter/fml/message_loop.h"
+#include "flutter/shell/common/persistent_cache.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
 
 namespace shell {
@@ -17,10 +18,13 @@ sk_sp<GrContext> IOManager::CreateCompatibleResourceLoadingContext(
 
   GrContextOptions options = {};
 
+  options.fPersistentCache = PersistentCache::GetCacheForProcess();
+
   // There is currently a bug with doing GPU YUV to RGB conversions on the IO
   // thread. The necessary work isn't being flushed or synchronized with the
   // other threads correctly, so the textures end up blank.  For now, suppress
   // that feature, which will cause texture uploads to do CPU YUV conversion.
+  // A similar work-around is also used in shell/gpu/gpu_surface_gl.cc.
   options.fDisableGpuYUVConversion = true;
 
   // To get video playback on the widest range of devices, we limit Skia to
@@ -67,8 +71,29 @@ fml::WeakPtr<GrContext> IOManager::GetResourceContext() const {
              : fml::WeakPtr<GrContext>();
 }
 
+void IOManager::NotifyResourceContextAvailable(
+    sk_sp<GrContext> resource_context) {
+  // The resource context needs to survive as long as we have Dart objects
+  // referencing. We shouldn't ever need to replace it if we have one - unless
+  // we've somehow shut down the Dart VM and started a new one fresh.
+  if (!resource_context_) {
+    UpdateResourceContext(std::move(resource_context));
+  }
+}
+
+void IOManager::UpdateResourceContext(sk_sp<GrContext> resource_context) {
+  resource_context_ = std::move(resource_context);
+  resource_context_weak_factory_ =
+      resource_context_ ? std::make_unique<fml::WeakPtrFactory<GrContext>>(
+                              resource_context_.get())
+                        : nullptr;
+}
+
 fml::RefPtr<flow::SkiaUnrefQueue> IOManager::GetSkiaUnrefQueue() const {
   return unref_queue_;
 }
 
+fml::WeakPtr<IOManager> IOManager::GetWeakPtr() {
+  return weak_factory_.GetWeakPtr();
+}
 }  // namespace shell

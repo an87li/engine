@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -102,6 +102,7 @@ class Color {
   /// For example, to get a fully opaque orange, you would use `const
   /// Color(0xFFFF9000)` (`FF` for the alpha, `FF` for the red, `90` for the
   /// green, and `00` for the blue).
+  @pragma('vm:entry-point')
   const Color(int value) : value = value & 0xFFFFFFFF;
 
   /// Construct a color from the lower 8 bits of four integers.
@@ -878,7 +879,7 @@ enum StrokeCap {
 enum StrokeJoin {
   /// Joins between line segments form sharp corners.
   ///
-  /// {@animation joinMiterEnum 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
   ///
   /// The center of the line segment is colored in the diagram above to
   /// highlight the join, but in normal usage the join is the same color as the
@@ -894,7 +895,7 @@ enum StrokeJoin {
 
   /// Joins between line segments are semi-circular.
   ///
-  /// {@animation joinRoundEnum 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/round_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/round_join.mp4}
   ///
   /// The center of the line segment is colored in the diagram above to
   /// highlight the join, but in normal usage the join is the same color as the
@@ -909,7 +910,7 @@ enum StrokeJoin {
   /// Joins between line segments connect the corners of the butt ends of the
   /// line segments to give a beveled appearance.
   ///
-  /// {@animation joinBevelEnum 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/bevel_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/bevel_join.mp4}
   ///
   /// The center of the line segment is colored in the diagram above to
   /// highlight the join, but in normal usage the join is the same color as the
@@ -1017,14 +1018,6 @@ enum Clip {
   antiAliasWithSaveLayer,
 }
 
-/// The global default value of whether and how to clip a widget. This is only for
-/// temporary migration from default-to-clip to default-to-NOT-clip.
-///
-// TODO(liyuqian): Set it to Clip.none. (https://github.com/flutter/flutter/issues/18057)
-// We currently have Clip.antiAlias to preserve our old behaviors.
-@Deprecated("Do not use this as it'll soon be removed after we set the default behavior to Clip.none.")
-const Clip defaultClipBehavior = Clip.antiAlias;
-
 // If we actually run on big endian machines, we'll need to do something smarter
 // here. We don't use [Endian.Host] because it's not a compile-time
 // constant and can't propagate into the set/get calls.
@@ -1065,6 +1058,7 @@ class Paint {
   static const int _kMaskFilterIndex = 12;
   static const int _kMaskFilterBlurStyleIndex = 13;
   static const int _kMaskFilterSigmaIndex = 14;
+  static const int _kInvertColorIndex = 15;
 
   static const int _kIsAntiAliasOffset = _kIsAntiAliasIndex << 2;
   static const int _kColorOffset = _kColorIndex << 2;
@@ -1081,13 +1075,15 @@ class Paint {
   static const int _kMaskFilterOffset = _kMaskFilterIndex << 2;
   static const int _kMaskFilterBlurStyleOffset = _kMaskFilterBlurStyleIndex << 2;
   static const int _kMaskFilterSigmaOffset = _kMaskFilterSigmaIndex << 2;
+  static const int _kInvertColorOffset = _kInvertColorIndex << 2;
   // If you add more fields, remember to update _kDataByteCount.
   static const int _kDataByteCount = 75;
 
   // Binary format must match the deserialization code in paint.cc.
   List<dynamic> _objects;
   static const int _kShaderIndex = 0;
-  static const int _kObjectCount = 1; // Must be one larger than the largest index.
+  static const int _kColorFilterMatrixIndex = 1;
+  static const int _kObjectCount = 2; // Must be one larger than the largest index.
 
   /// Whether to apply anti-aliasing to lines and images drawn on the
   /// canvas.
@@ -1206,11 +1202,11 @@ class Paint {
   ///
   /// Some examples of joins:
   ///
-  /// {@animation joinMiterStrokeJoin 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
   ///
-  /// {@animation joinRoundStrokeJoin 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/round_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/round_join.mp4}
   ///
-  /// {@animation joinBevelStrokeJoin 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/bevel_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/bevel_join.mp4}
   ///
   /// The centers of the line segments are colored in the diagrams above to
   /// highlight the joins, but in normal usage the join is the same color as the
@@ -1245,11 +1241,11 @@ class Paint {
   /// Defaults to 4.0.  Using zero as a limit will cause a [StrokeJoin.bevel]
   /// join to be used all the time.
   ///
-  /// {@animation joinMiter0Limit 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_0_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_0_join.mp4}
   ///
-  /// {@animation joinMiter4Limit 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_4_join.mp4}
   ///
-  /// {@animation joinMiter6Limit 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_6_join.mp4}
+  /// {@animation 300 300 https://flutter.github.io/assets-for-api-docs/assets/dart-ui/miter_6_join.mp4}
   ///
   /// The centers of the line segments are colored in the diagrams above to
   /// highlight the joins, but in normal usage the join is the same color as the
@@ -1341,26 +1337,62 @@ class Paint {
   ///
   /// When a shape is being drawn, [colorFilter] overrides [color] and [shader].
   ColorFilter get colorFilter {
-    final bool isNull = _data.getInt32(_kColorFilterOffset, _kFakeHostEndian) == 0;
-    if (isNull)
-      return null;
-    return new ColorFilter.mode(
-      new Color(_data.getInt32(_kColorFilterColorOffset, _kFakeHostEndian)),
-      BlendMode.values[_data.getInt32(_kColorFilterBlendModeOffset, _kFakeHostEndian)]
-    );
+    switch (_data.getInt32(_kColorFilterOffset, _kFakeHostEndian)) {
+      case ColorFilter._TypeNone:
+        return null;
+      case ColorFilter._TypeMode:
+        return new ColorFilter.mode(
+          new Color(_data.getInt32(_kColorFilterColorOffset, _kFakeHostEndian)),
+          BlendMode.values[_data.getInt32(_kColorFilterBlendModeOffset, _kFakeHostEndian)],
+        );
+      case ColorFilter._TypeMatrix:
+        return new ColorFilter.matrix(_objects[_kColorFilterMatrixIndex]);
+      case ColorFilter._TypeLinearToSrgbGamma:
+        return const ColorFilter.linearToSrgbGamma();
+      case ColorFilter._TypeSrgbToLinearGamma:
+        return const ColorFilter.srgbToLinearGamma();
+    }
+
+    return null;
   }
+
   set colorFilter(ColorFilter value) {
     if (value == null) {
-      _data.setInt32(_kColorFilterOffset, 0, _kFakeHostEndian);
+      _data.setInt32(_kColorFilterOffset, ColorFilter._TypeNone, _kFakeHostEndian);
       _data.setInt32(_kColorFilterColorOffset, 0, _kFakeHostEndian);
       _data.setInt32(_kColorFilterBlendModeOffset, 0, _kFakeHostEndian);
+
+      if (_objects != null) {
+        _objects[_kColorFilterMatrixIndex] = null;
+      }
     } else {
-      assert(value._color != null);
-      assert(value._blendMode != null);
-      _data.setInt32(_kColorFilterOffset, 1, _kFakeHostEndian);
-      _data.setInt32(_kColorFilterColorOffset, value._color.value, _kFakeHostEndian);
-      _data.setInt32(_kColorFilterBlendModeOffset, value._blendMode.index, _kFakeHostEndian);
+      _data.setInt32(_kColorFilterOffset, value._type, _kFakeHostEndian);
+
+      if (value._type == ColorFilter._TypeMode) {
+        assert(value._color != null);
+        assert(value._blendMode != null);
+
+        _data.setInt32(_kColorFilterColorOffset, value._color.value, _kFakeHostEndian);
+        _data.setInt32(_kColorFilterBlendModeOffset, value._blendMode.index, _kFakeHostEndian);
+      } else if (value._type == ColorFilter._TypeMatrix) {
+        assert(value._matrix != null);
+
+        _objects ??= new List<dynamic>(_kObjectCount);
+        _objects[_kColorFilterMatrixIndex] = Float32List.fromList(value._matrix);
+      }
     }
+  }
+
+  /// Whether the colors of the image are inverted when drawn.
+  ///
+  /// inverting the colors of an image applies a new color filter that will
+  /// be composed with any user provided color filters. This is primarily
+  /// used for implementing smart invert on iOS.
+  bool get invertColors {
+    return _data.getInt32(_kInvertColorOffset, _kFakeHostEndian) == 1;
+  }
+  set invertColors(bool value) {
+    _data.setInt32(_kInvertColorOffset, value ? 1 : 0, _kFakeHostEndian);
   }
 
   @override
@@ -1411,8 +1443,12 @@ class Paint {
       result.write('${semicolon}filterQuality: $filterQuality');
       semicolon = '; ';
     }
-    if (shader != null)
+    if (shader != null) {
       result.write('${semicolon}shader: $shader');
+      semicolon = '; ';
+    }
+    if (invertColors)
+      result.write('${semicolon}invert: $invertColors');
     result.write(')');
     return result.toString();
   }
@@ -1467,9 +1503,14 @@ class _ImageInfo {
   _ImageInfo(this.width, this.height, this.format, this.rowBytes) {
     rowBytes ??= width * 4;
   }
+
+  @pragma('vm:entry-point', 'get')
   int width;
+  @pragma('vm:entry-point', 'get')
   int height;
+  @pragma('vm:entry-point', 'get')
   int format;
+  @pragma('vm:entry-point', 'get')
   int rowBytes;
 }
 
@@ -1479,11 +1520,13 @@ class _ImageInfo {
 ///
 /// To draw an [Image], use one of the methods on the [Canvas] class, such as
 /// [Canvas.drawImage].
+@pragma('vm:entry-point')
 class Image extends NativeFieldWrapperClass2 {
-  /// This class is created by the engine, and should not be instantiated
-  /// or extended directly.
-  ///
-  /// To obtain an [Image] object, use [instantiateImageCodec].
+  // This class is created by the engine, and should not be instantiated
+  // or extended directly.
+  //
+  // To obtain an [Image] object, use [instantiateImageCodec].
+  @pragma('vm:entry-point')
   Image._();
 
   /// The number of image pixels along the image's horizontal axis.
@@ -1525,12 +1568,14 @@ typedef ImageDecoderCallback = void Function(Image result);
 ///
 /// To obtain an instance of the [FrameInfo] interface, see
 /// [Codec.getNextFrame].
+@pragma('vm:entry-point')
 class FrameInfo extends NativeFieldWrapperClass2 {
   /// This class is created by the engine, and should not be instantiated
   /// or extended directly.
   ///
   /// To obtain an instance of the [FrameInfo] interface, see
   /// [Codec.getNextFrame].
+  @pragma('vm:entry-point')
   FrameInfo._();
 
   /// The duration this frame should be shown.
@@ -1542,12 +1587,21 @@ class FrameInfo extends NativeFieldWrapperClass2 {
 }
 
 /// A handle to an image codec.
+///
+/// This class is created by the engine, and should not be instantiated
+/// or extended directly.
+///
+/// To obtain an instance of the [Codec] interface, see
+/// [instantiateImageCodec].
+@pragma('vm:entry-point')
 class Codec extends NativeFieldWrapperClass2 {
-  /// This class is created by the engine, and should not be instantiated
-  /// or extended directly.
-  ///
-  /// To obtain an instance of the [Codec] interface, see
-  /// [instantiateImageCodec].
+  //
+  // This class is created by the engine, and should not be instantiated
+  // or extended directly.
+  //
+  // To obtain an instance of the [Codec] interface, see
+  // [instantiateImageCodec].
+  @pragma('vm:entry-point')
   Codec._();
 
   /// Number of frames in this image.
@@ -1579,28 +1633,38 @@ class Codec extends NativeFieldWrapperClass2 {
 /// Instantiates an image codec [Codec] object.
 ///
 /// [list] is the binary image data (e.g a PNG or GIF binary data).
-/// The data can be for either static or animated images.
+/// The data can be for either static or animated images. The following image
+/// formats are supported: {@macro flutter.dart:ui.imageFormats}
 ///
-/// The following image formats are supported: {@macro flutter.dart:ui.imageFormats}
+/// The [decodedCacheRatioCap] is the default maximum multiple of the compressed
+/// image size to cache when decoding animated image frames. For example,
+/// setting this to `2.0` means that a 400KB GIF would be allowed at most to use
+/// 800KB of memory caching unessential decoded frames. Caching decoded frames
+/// saves CPU but can result in out-of-memory crashes when decoding large (or
+/// multiple) animated images. Note that GIFs are highly compressed, and it's
+/// unlikely that a factor that low will be sufficient to cache all decoded
+/// frames. The default value is `25.0`.
 ///
 /// The returned future can complete with an error if the image decoding has
 /// failed.
-Future<Codec> instantiateImageCodec(Uint8List list) {
+Future<Codec> instantiateImageCodec(Uint8List list, {
+  double decodedCacheRatioCap = double.infinity,
+}) {
   return _futurize(
-    (_Callback<Codec> callback) => _instantiateImageCodec(list, callback, null)
+    (_Callback<Codec> callback) => _instantiateImageCodec(list, callback, null, decodedCacheRatioCap),
   );
 }
 
 /// Instantiates a [Codec] object for an image binary data.
 ///
 /// Returns an error message if the instantiation has failed, null otherwise.
-String _instantiateImageCodec(Uint8List list, _Callback<Codec> callback, _ImageInfo imageInfo)
+String _instantiateImageCodec(Uint8List list, _Callback<Codec> callback, _ImageInfo imageInfo, double decodedCacheRatioCap)
   native 'instantiateImageCodec';
 
 /// Loads a single image frame from a byte array into an [Image] object.
 ///
-/// This is a convenience wrapper around [instantiateImageCodec].
-/// Prefer using [instantiateImageCodec] which also supports multi frame images.
+/// This is a convenience wrapper around [instantiateImageCodec]. Prefer using
+/// [instantiateImageCodec] which also supports multi frame images.
 void decodeImageFromList(Uint8List list, ImageDecoderCallback callback) {
   _decodeImageFromListAsync(list, callback);
 }
@@ -1619,17 +1683,26 @@ Future<Null> _decodeImageFromListAsync(Uint8List list,
 /// [rowBytes] is the number of bytes consumed by each row of pixels in the
 /// data buffer.  If unspecified, it defaults to [width] multipled by the
 /// number of bytes per pixel in the provided [format].
+///
+/// The [decodedCacheRatioCap] is the default maximum multiple of the compressed
+/// image size to cache when decoding animated image frames. For example,
+/// setting this to `2.0` means that a 400KB GIF would be allowed at most to use
+/// 800KB of memory caching unessential decoded frames. Caching decoded frames
+/// saves CPU but can result in out-of-memory crashes when decoding large (or
+/// multiple) animated images. Note that GIFs are highly compressed, and it's
+/// unlikely that a factor that low will be sufficient to cache all decoded
+/// frames. The default value is `25.0`.
 void decodeImageFromPixels(
   Uint8List pixels,
   int width,
   int height,
   PixelFormat format,
   ImageDecoderCallback callback,
-  {int rowBytes}
+  {int rowBytes, double decodedCacheRatioCap = double.infinity}
 ) {
   final _ImageInfo imageInfo = new _ImageInfo(width, height, format.index, rowBytes);
   final Future<Codec> codecFuture = _futurize(
-    (_Callback<Codec> callback) => _instantiateImageCodec(pixels, callback, imageInfo)
+    (_Callback<Codec> callback) => _instantiateImageCodec(pixels, callback, imageInfo, decodedCacheRatioCap)
   );
   codecFuture.then((Codec codec) => codec.getNextFrame())
       .then((FrameInfo frameInfo) => callback(frameInfo.image));
@@ -1715,6 +1788,15 @@ enum PathOperation {
   reverseDifference,
 }
 
+/// A handle for the framework to hold and retain an engine layer across frames.
+@pragma('vm:entry-point')
+class EngineLayer extends NativeFieldWrapperClass2 {
+  /// This class is created by the engine, and should not be instantiated
+  /// or extended directly.
+  @pragma('vm:entry-point')
+  EngineLayer._();
+}
+
 /// A complex, one-dimensional subset of a plane.
 ///
 /// A path consists of a number of subpaths, and a _current point_.
@@ -1732,8 +1814,10 @@ enum PathOperation {
 ///
 /// Paths can be drawn on canvases using [Canvas.drawPath], and can
 /// used to create clip regions using [Canvas.clipPath].
+@pragma('vm:entry-point')
 class Path extends NativeFieldWrapperClass2 {
   /// Create a new empty [Path] object.
+  @pragma('vm:entry-point')
   Path() { _constructor(); }
   void _constructor() native 'Path_constructor';
 
@@ -2326,25 +2410,84 @@ class ColorFilter {
   /// to the [Paint.blendMode], using the output of this filter as the source
   /// and the background as the destination.
   const ColorFilter.mode(Color color, BlendMode blendMode)
-    : _color = color, _blendMode = blendMode;
+      : _color = color,
+        _blendMode = blendMode,
+        _matrix = null,
+        _type = _TypeMode;
+
+  /// Construct a color filter that transforms a color by a 4x5 matrix. The
+  /// matrix is in row-major order and the translation column is specified in
+  /// unnormalized, 0...255, space.
+  const ColorFilter.matrix(List<double> matrix)
+      : _color = null,
+        _blendMode = null,
+        _matrix = matrix,
+        _type = _TypeMatrix;
+
+  /// Construct a color filter that applies the srgb gamma curve to the RGB
+  /// channels.
+  const ColorFilter.linearToSrgbGamma()
+      : _color = null,
+        _blendMode = null,
+        _matrix = null,
+        _type = _TypeLinearToSrgbGamma;
+
+  /// Creates a color filter that applies the inverse of the srgb gamma curve
+  /// to the RGB channels.
+  const ColorFilter.srgbToLinearGamma()
+      : _color = null,
+        _blendMode = null,
+        _matrix = null,
+        _type = _TypeSrgbToLinearGamma;
 
   final Color _color;
   final BlendMode _blendMode;
+  final List<double> _matrix;
+  final int _type;
+
+  // The type of SkColorFilter class to create for Skia.
+  // These constants must be kept in sync with ColorFilterType in paint.cc.
+  static const int _TypeNone = 0; // null
+  static const int _TypeMode = 1; // MakeModeFilter
+  static const int _TypeMatrix = 2; // MakeMatrixFilterRowMajor255
+  static const int _TypeLinearToSrgbGamma = 3; // MakeLinearToSRGBGamma
+  static const int _TypeSrgbToLinearGamma = 4; // MakeSRGBToLinearGamma
 
   @override
   bool operator ==(dynamic other) {
-    if (other is! ColorFilter)
+    if (other is! ColorFilter) {
       return false;
+    }
     final ColorFilter typedOther = other;
-    return _color == typedOther._color &&
-           _blendMode == typedOther._blendMode;
+
+    if (_type != typedOther._type) {
+      return false;
+    }
+    if (!_listEquals<double>(_matrix, typedOther._matrix)) {
+      return false;
+    }
+
+    return _color == typedOther._color && _blendMode == typedOther._blendMode;
   }
 
   @override
-  int get hashCode => hashValues(_color, _blendMode);
+  int get hashCode => hashValues(_color, _blendMode, hashList(_matrix), _type);
 
   @override
-  String toString() => 'ColorFilter($_color, $_blendMode)';
+  String toString() {
+    switch (_type) {
+      case _TypeMode:
+        return 'ColorFilter.mode($_color, $_blendMode)';
+      case _TypeMatrix:
+        return 'ColorFilter.matrix($_matrix)';
+      case _TypeLinearToSrgbGamma:
+        return 'ColorFilter.linearToSrgbGamma()';
+      case _TypeSrgbToLinearGamma:
+        return 'ColorFilter.srgbToLinearGamma()';
+      default:
+        return 'Unknown ColorFilter type. This is an error. If you\'re seeing this, please file an issue at https://github.com/flutter/flutter/issues/new.';
+    }
+  }
 }
 
 /// A filter operation to apply to a raster image.
@@ -2383,6 +2526,7 @@ class ImageFilter extends NativeFieldWrapperClass2 {
 class Shader extends NativeFieldWrapperClass2 {
   /// This class is created by the engine, and should not be instantiated
   /// or extended directly.
+  @pragma('vm:entry-point')
   Shader._();
 }
 
@@ -2646,6 +2790,7 @@ class ImageShader extends Shader {
   /// direction and y direction respectively. The fourth argument gives the
   /// matrix to apply to the effect. All the arguments are required and must not
   /// be null.
+  @pragma('vm:entry-point')
   ImageShader(Image image, TileMode tmx, TileMode tmy, Float64List matrix4) :
     assert(image != null), // image is checked on the engine side
     assert(tmx != null),
@@ -2810,6 +2955,7 @@ class Canvas extends NativeFieldWrapperClass2 {
   ///
   /// To end the recording, call [PictureRecorder.endRecording] on the
   /// given recorder.
+  @pragma('vm:entry-point')
   Canvas(PictureRecorder recorder, [ Rect cullRect ]) : assert(recorder != null) {
     if (recorder.isRecording)
       throw new ArgumentError('"recorder" must not already be associated with another Canvas.');
@@ -3522,11 +3668,13 @@ class Canvas extends NativeFieldWrapperClass2 {
 /// A [Picture] can be placed in a [Scene] using a [SceneBuilder], via
 /// the [SceneBuilder.addPicture] method. A [Picture] can also be
 /// drawn into a [Canvas], using the [Canvas.drawPicture] method.
+@pragma('vm:entry-point')
 class Picture extends NativeFieldWrapperClass2 {
   /// This class is created by the engine, and should not be instantiated
   /// or extended directly.
   ///
   /// To create a [Picture], use a [PictureRecorder].
+  @pragma('vm:entry-point')
   Picture._();
 
   /// Creates an image from this picture.
@@ -3536,7 +3684,15 @@ class Picture extends NativeFieldWrapperClass2 {
   ///
   /// Although the image is returned synchronously, the picture is actually
   /// rasterized the first time the image is drawn and then cached.
-  Image toImage(int width, int height) native 'Picture_toImage';
+  Future<Image> toImage(int width, int height) {
+    if (width <= 0 || height <= 0)
+      throw new Exception('Invalid image dimensions.');
+    return _futurize(
+      (_Callback<Image> callback) => _toImage(width, height, callback)
+    );
+  }
+
+  String _toImage(int width, int height, _Callback<Image> callback) native 'Picture_toImage';
 
   /// Release the resources used by this object. The object is no longer usable
   /// after this method is called.
@@ -3557,6 +3713,7 @@ class PictureRecorder extends NativeFieldWrapperClass2 {
   /// Creates a new idle PictureRecorder. To associate it with a
   /// [Canvas] and begin recording, pass this [PictureRecorder] to the
   /// [Canvas] constructor.
+  @pragma('vm:entry-point')
   PictureRecorder() { _constructor(); }
   void _constructor() native 'PictureRecorder_constructor';
 
@@ -3577,6 +3734,200 @@ class PictureRecorder extends NativeFieldWrapperClass2 {
   ///
   /// Returns null if the PictureRecorder is not associated with a canvas.
   Picture endRecording() native 'PictureRecorder_endRecording';
+}
+
+/// A single shadow.
+///
+/// Multiple shadows are stacked together in a [TextStyle].
+class Shadow {
+  /// Construct a shadow.
+  ///
+  /// The default shadow is a black shadow with zero offset and zero blur.
+  /// Default shadows should be completely covered by the casting element,
+  /// and not be visble.
+  ///
+  /// Transparency should be adjusted through the [color] alpha.
+  ///
+  /// Shadow order matters due to compositing multiple translucent objects not
+  /// being commutative.
+  const Shadow({
+    this.color = const Color(_kColorDefault),
+    this.offset = Offset.zero,
+    this.blurRadius = 0.0,
+  }) : assert(color != null, 'Text shadow color was null.'),
+       assert(offset != null, 'Text shadow offset was null.'),
+       assert(blurRadius >= 0.0, 'Text shadow blur radius should be non-negative.');
+
+  static const int _kColorDefault = 0xFF000000;
+  // Constants for shadow encoding.
+  static const int _kBytesPerShadow = 16;
+  static const int _kColorOffset = 0 << 2;
+  static const int _kXOffset = 1 << 2;
+  static const int _kYOffset = 2 << 2;
+  static const int _kBlurOffset = 3 << 2;
+
+  /// Color that the shadow will be drawn with.
+  ///
+  /// The shadows are shapes composited directly over the base canvas, and do not
+  /// represent optical occlusion.
+  final Color color;
+
+  /// The displacement of the shadow from the casting element.
+  ///
+  /// Positive x/y offsets will shift the shadow to the right and down, while
+  /// negative offsets shift the shadow to the left and up. The offsets are
+  /// relative to the position of the element that is casting it.
+  final Offset offset;
+
+  /// The standard deviation of the Gaussian to convolve with the shadow's shape.
+  final double blurRadius;
+
+  /// Converts a blur radius in pixels to sigmas.
+  ///
+  /// See the sigma argument to [MaskFilter.blur].
+  ///
+  // See SkBlurMask::ConvertRadiusToSigma().
+  // <https://github.com/google/skia/blob/bb5b77db51d2e149ee66db284903572a5aac09be/src/effects/SkBlurMask.cpp#L23>
+  static double convertRadiusToSigma(double radius) {
+    return radius * 0.57735 + 0.5;
+  }
+
+  /// The [blurRadius] in sigmas instead of logical pixels.
+  ///
+  /// See the sigma argument to [MaskFilter.blur].
+  double get blurSigma => convertRadiusToSigma(blurRadius);
+
+  /// Create the [Paint] object that corresponds to this shadow description.
+  ///
+  /// The [offset] is not represented in the [Paint] object.
+  /// To honor this as well, the shape should be translated by [offset] before
+  /// being filled using this [Paint].
+  ///
+  /// This class does not provide a way to disable shadows to avoid inconsistencies
+  /// in shadow blur rendering, primarily as a method of reducing test flakiness.
+  /// [toPaint] should be overriden in subclasses to provide this functionality.
+  Paint toPaint() {
+    return Paint()
+      ..color = color
+      ..maskFilter = MaskFilter.blur(BlurStyle.normal, blurSigma);
+  }
+
+  /// Returns a new shadow with its [offset] and [blurRadius] scaled by the given
+  /// factor.
+  Shadow scale(double factor) {
+    return Shadow(
+      color: color,
+      offset: offset * factor,
+      blurRadius: blurRadius * factor,
+    );
+  }
+
+  /// Linearly interpolate between two shadows.
+  ///
+  /// If either shadow is null, this function linearly interpolates from a
+  /// a shadow that matches the other shadow in color but has a zero
+  /// offset and a zero blurRadius.
+  ///
+  /// {@template dart.ui.shadow.lerp}
+  /// The `t` argument represents position on the timeline, with 0.0 meaning
+  /// that the interpolation has not started, returning `a` (or something
+  /// equivalent to `a`), 1.0 meaning that the interpolation has finished,
+  /// returning `b` (or something equivalent to `b`), and values in between
+  /// meaning that the interpolation is at the relevant point on the timeline
+  /// between `a` and `b`. The interpolation can be extrapolated beyond 0.0 and
+  /// 1.0, so negative values and values greater than 1.0 are valid (and can
+  /// easily be generated by curves such as [Curves.elasticInOut]).
+  ///
+  /// Values for `t` are usually obtained from an [Animation<double>], such as
+  /// an [AnimationController].
+  /// {@endtemplate}
+  static Shadow lerp(Shadow a, Shadow b, double t) {
+    assert(t != null);
+    if (a == null && b == null)
+      return null;
+    if (a == null)
+      return b.scale(t);
+    if (b == null)
+      return a.scale(1.0 - t);
+    return Shadow(
+      color: Color.lerp(a.color, b.color, t),
+      offset: Offset.lerp(a.offset, b.offset, t),
+      blurRadius: lerpDouble(a.blurRadius, b.blurRadius, t),
+    );
+  }
+
+  /// Linearly interpolate between two lists of shadows.
+  ///
+  /// If the lists differ in length, excess items are lerped with null.
+  ///
+  /// {@macro dart.ui.shadow.lerp}
+  static List<Shadow> lerpList(List<Shadow> a, List<Shadow> b, double t) {
+    assert(t != null);
+    if (a == null && b == null)
+      return null;
+    a ??= <Shadow>[];
+    b ??= <Shadow>[];
+    final List<Shadow> result = <Shadow>[];
+    final int commonLength = math.min(a.length, b.length);
+    for (int i = 0; i < commonLength; i += 1)
+      result.add(Shadow.lerp(a[i], b[i], t));
+    for (int i = commonLength; i < a.length; i += 1)
+      result.add(a[i].scale(1.0 - t));
+    for (int i = commonLength; i < b.length; i += 1)
+      result.add(b[i].scale(t));
+    return result;
+  }
+
+  @override
+  bool operator ==(dynamic other) {
+    if (identical(this, other))
+      return true;
+    if (other is! Shadow)
+      return false;
+    final Shadow typedOther = other;
+    return color == typedOther.color &&
+           offset == typedOther.offset &&
+           blurRadius == typedOther.blurRadius;
+  }
+
+  @override
+  int get hashCode => hashValues(color, offset, blurRadius);
+
+  // Serialize [shadows] into ByteData. The format is a single uint_32_t at
+  // the beginning indicating the number of shadows, followed by _kBytesPerShadow
+  // bytes for each shadow.
+  static ByteData _encodeShadows(List<Shadow> shadows) {
+    if (shadows == null)
+      return ByteData(0);
+
+    final int byteCount = shadows.length * _kBytesPerShadow;
+    final ByteData shadowsData = ByteData(byteCount);
+
+    int shadowOffset = 0;
+    for (int shadowIndex = 0; shadowIndex < shadows.length; ++shadowIndex) {
+      final Shadow shadow = shadows[shadowIndex];
+      if (shadow == null)
+        continue;
+      shadowOffset = shadowIndex * _kBytesPerShadow;
+
+      shadowsData.setInt32(_kColorOffset + shadowOffset,
+        shadow.color.value ^ Shadow._kColorDefault, _kFakeHostEndian);
+
+      shadowsData.setFloat32(_kXOffset + shadowOffset,
+        shadow.offset.dx, _kFakeHostEndian);
+
+      shadowsData.setFloat32(_kYOffset + shadowOffset,
+        shadow.offset.dy, _kFakeHostEndian);
+
+      shadowsData.setFloat32(_kBlurOffset + shadowOffset,
+        shadow.blurRadius, _kFakeHostEndian);
+    }
+
+    return shadowsData;
+  }
+
+  @override
+  String toString() => 'TextShadow($color, $offset, $blurRadius)';
 }
 
 /// Generic callback signature, used by [_futurize].
@@ -3622,4 +3973,3 @@ Future<T> _futurize<T>(_Callbacker<T> callbacker) {
     throw new Exception(error);
   return completer.future;
 }
-

@@ -1,4 +1,4 @@
-// Copyright 2015 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -14,6 +14,8 @@
 
 namespace flow {
 
+// DEPRECATED
+// The frame per second FPS could be different than 60 (e.g., 120).
 static const double kOneFrameMS = 1e3 / 60.0;
 
 class Stopwatch {
@@ -28,6 +30,10 @@ class Stopwatch {
 
   fml::TimeDelta MaxDelta() const;
 
+  fml::TimeDelta AverageDelta() const;
+
+  void InitVisualizeSurface(const SkRect& rect) const;
+
   void Visualize(SkCanvas& canvas, const SkRect& rect) const;
 
   void Start();
@@ -40,6 +46,11 @@ class Stopwatch {
   fml::TimePoint start_;
   std::vector<fml::TimeDelta> laps_;
   size_t current_sample_;
+  // Mutable data cache for performance optimization of the graphs. Prevents
+  // expensive redrawing of old data.
+  mutable bool cache_dirty_;
+  mutable sk_sp<SkSurface> visualize_cache_surface_;
+  mutable size_t prev_drawn_sample_index_;
 
   FML_DISALLOW_COPY_AND_ASSIGN(Stopwatch);
 };

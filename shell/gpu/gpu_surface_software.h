@@ -1,10 +1,11 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #ifndef FLUTTER_SHELL_GPU_GPU_SURFACE_SOFTWARE_H_
 #define FLUTTER_SHELL_GPU_GPU_SURFACE_SOFTWARE_H_
 
+#include "flutter/flow/embedded_views.h"
 #include "flutter/fml/macros.h"
 #include "flutter/fml/memory/weak_ptr.h"
 #include "flutter/shell/common/surface.h"
@@ -15,7 +16,10 @@ namespace shell {
 class GPUSurfaceSoftwareDelegate {
  public:
   virtual sk_sp<SkSurface> AcquireBackingStore(const SkISize& size) = 0;
+
   virtual bool PresentBackingStore(sk_sp<SkSurface> backing_store) = 0;
+
+  virtual flow::ExternalViewEmbedder* GetExternalViewEmbedder();
 };
 
 class GPUSurfaceSoftware : public Surface {
@@ -24,11 +28,20 @@ class GPUSurfaceSoftware : public Surface {
 
   ~GPUSurfaceSoftware() override;
 
+  // |shell::Surface|
   bool IsValid() override;
 
+  // |shell::Surface|
   std::unique_ptr<SurfaceFrame> AcquireFrame(const SkISize& size) override;
 
+  // |shell::Surface|
+  SkMatrix GetRootTransformation() const override;
+
+  // |shell::Surface|
   GrContext* GetContext() override;
+
+  // |shell::Surface|
+  flow::ExternalViewEmbedder* GetExternalViewEmbedder() override;
 
  private:
   GPUSurfaceSoftwareDelegate* delegate_;

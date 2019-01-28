@@ -1,4 +1,4 @@
-// Copyright 2016 The Chromium Authors. All rights reserved.
+// Copyright 2013 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -69,6 +69,9 @@ enum class SemanticsFlags : int32_t {
 
 struct SemanticsNode {
   SemanticsNode();
+
+  SemanticsNode(const SemanticsNode& other);
+
   ~SemanticsNode();
 
   bool HasAction(SemanticsAction action);
@@ -79,9 +82,13 @@ struct SemanticsNode {
   int32_t actions = 0;
   int32_t textSelectionBase = -1;
   int32_t textSelectionExtent = -1;
+  int32_t scrollChildren = 0;
+  int32_t scrollIndex = 0;
   double scrollPosition = std::nan("");
   double scrollExtentMax = std::nan("");
   double scrollExtentMin = std::nan("");
+  double elevation = 0.0;
+  double thickness = 0.0;
   std::string label;
   std::string hint;
   std::string value;
